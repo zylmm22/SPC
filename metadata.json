@@ -1,0 +1,8 @@
+{
+  "name": "智能SPC统计过程控制系统",
+  "description": "企业级SPC统计过程控制系统，支持Xbar-R、Xbar-S、I-MR、P、NP、C、U全类型控制图，动态控制限计算，Nelson 8大判异准则实时勾选判异，Excel模板自定义搭建与批量上传，子组数据作废重算与过程能力分析(Cp/Cpk/Pp/Ppk)。",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
