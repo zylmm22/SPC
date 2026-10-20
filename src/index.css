@@ -144,3 +144,76 @@ html.light [class*="from-slate-950"] button:not(.bg-indigo-600) {
   background-color: #ffffff !important;
   color: #334155 !important;
 }
+/* ==========================================================================
+   精确修正：高亮按钮纯白字 + 备份弹窗头部 + 权限表深灰行
+   ========================================================================== */
+
+/* 1. 彻底解决蓝底黑字（第三、四张图）：强制所有主色高亮按钮文字为纯白 */
+html.light .bg-indigo-600,
+html.light [class*="bg-indigo-600"],
+html.light .bg-sky-600,
+html.light [class*="bg-sky-600"],
+html.light .bg-blue-600,
+html.light .bg-rose-600,
+html.light .bg-emerald-600,
+html.light button.bg-indigo-600 * {
+  color: #ffffff !important;
+  fill: #ffffff !important;
+}
+
+/* 按钮悬停状态保持纯白字 */
+html.light .bg-indigo-600:hover,
+html.light [class*="bg-indigo-600"]:hover {
+  color: #ffffff !important;
+}
+
+/* 2. 彻底解决第二张图：数据备份弹窗的大黑头 (转为纯白卡片，标题深黑高亮) */
+html.light .relative.w-full > div:first-child[class*="bg-"],
+html.light [class*="from-slate-900"] {
+  background-color: #ffffff !important;
+  background-image: none !important;
+  border-bottom: 1px solid #e2e8f0 !important;
+}
+
+/* 强制弹窗头部大标题与描述为深色 */
+html.light .relative.w-full > div:first-child h3,
+html.light .relative.w-full > div:first-child h2 {
+  color: #0f172a !important;
+  font-weight: 700 !important;
+}
+html.light .relative.w-full > div:first-child p,
+html.light .relative.w-full > div:first-child span {
+  color: #475569 !important;
+}
+
+/* 3. 彻底解决第一张图：权限对照表后四行深灰底 (转为统一白底/微浅灰底) */
+html.light tr[class*="bg-"],
+html.light td[class*="bg-"],
+html.light .bg-slate-800\/60,
+html.light .bg-slate-900\/60 {
+  background-color: #ffffff !important;
+  border-color: #e2e8f0 !important;
+}
+
+/* 权限对照表文字颜色加深，红字警示保持醒目深红 */
+html.light tr td {
+  color: #1e293b !important;
+}
+html.light tr td [class*="text-rose"],
+html.light tr td [class*="text-red"] {
+  color: #dc2626 !important;
+  font-weight: 700 !important;
+}
+
+html.light [class*="bg-indigo-600/20"],
+html.light [class*="bg-indigo-600/20"] *,
+html.light button:has(> svg.lucide-activity) {
+  color: #0f172a !important; /* 强制纯黑色字体 */
+  font-weight: 500 !important;
+}
+
+/* 按钮图标也同步保持纯黑色 */
+html.light [class*="bg-indigo-600/20"] svg {
+  color: #0f172a !important;
+  stroke: #0f172a !important;
+}
