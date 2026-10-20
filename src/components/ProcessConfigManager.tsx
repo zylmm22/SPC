@@ -6,7 +6,7 @@
 import React, { useState, useEffect } from 'react';
 import { ProcessCharacteristic, SPCChartType } from '../types/spc';
 import { NELSON_8_RULES } from '../utils/spcConstants';
-import { Settings, Plus, Check, Sliders, Cpu, Wrench, Trash2, AlertTriangle, X } from 'lucide-react';
+import { Settings, Plus, Check, Sliders, Cpu, Wrench, Trash2, AlertTriangle, X, Lock, Eye } from 'lucide-react';
 
 interface ProcessConfigManagerProps {
   processes: ProcessCharacteristic[];
@@ -15,6 +15,7 @@ interface ProcessConfigManagerProps {
   onAddProcess: (newProcess: ProcessCharacteristic) => void;
   onUpdateProcess: (updated: ProcessCharacteristic) => void;
   onDeleteProcess: (processId: string) => void;
+  isAdmin?: boolean;
 }
 
 export const ProcessConfigManager: React.FC<ProcessConfigManagerProps> = ({
@@ -24,6 +25,7 @@ export const ProcessConfigManager: React.FC<ProcessConfigManagerProps> = ({
   onAddProcess,
   onUpdateProcess,
   onDeleteProcess,
+  isAdmin = true,
 }) => {
   const currentProcess = processes.find(p => p.id === activeProcessId) || processes[0];
 
@@ -104,28 +106,35 @@ export const ProcessConfigManager: React.FC<ProcessConfigManagerProps> = ({
               {processes.length}
             </span>
           </div>
-          <button
-            onClick={() => {
-              setIsCreatingNew(true);
-              setFormData({
-                name: '精密轴套外径精车',
-                processName: '精车工序 OP30',
-                chartType: 'xbar-r',
-                unit: 'mm',
-                sampleSize: 5,
-                isSampleVariable: false,
-                usl: 50.02,
-                sl: 50.00,
-                lsl: 49.98,
-                deviceList: ['CNC-LATHE-01', 'CNC-LATHE-02'],
-                activeRules: [1, 2, 3, 4, 5, 6, 7, 8]
-              });
-            }}
-            className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs flex items-center gap-1 transition-all shadow"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            新增工序
-          </button>
+          {isAdmin ? (
+            <button
+              onClick={() => {
+                setIsCreatingNew(true);
+                setFormData({
+                  name: '精密轴套外径精车',
+                  processName: '精车工序 OP30',
+                  chartType: 'xbar-r',
+                  unit: 'mm',
+                  sampleSize: 5,
+                  isSampleVariable: false,
+                  usl: 50.02,
+                  sl: 50.00,
+                  lsl: 49.98,
+                  deviceList: ['CNC-LATHE-01', 'CNC-LATHE-02'],
+                  activeRules: [1, 2, 3, 4, 5, 6, 7, 8]
+                });
+              }}
+              className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs flex items-center gap-1 transition-all shadow"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              新增工序
+            </button>
+          ) : (
+            <span className="text-[11px] text-amber-400 font-medium flex items-center gap-1">
+              <Lock className="w-3 h-3" />
+              访客只读
+            </span>
+          )}
         </div>
 
         <div className="space-y-2">
@@ -153,21 +162,23 @@ export const ProcessConfigManager: React.FC<ProcessConfigManagerProps> = ({
                     <span className="px-1.5 py-0.5 rounded text-[10px] uppercase font-mono bg-slate-800 text-slate-300">
                       {proc.chartType}
                     </span>
-                    {/* 工序快捷删除按钮 */}
-                    <button
-                      type="button"
-                      title={processes.length <= 1 ? "系统至少需保留一个工序特性" : `删除工序【${proc.name}】`}
-                      disabled={processes.length <= 1}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (processes.length > 1) {
-                          setConfirmDeleteProcess(proc);
-                        }
-                      }}
-                      className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-rose-950/50 disabled:opacity-20 disabled:hover:bg-transparent disabled:hover:text-slate-500 transition-colors"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    {/* 工序快捷删除按钮 (仅管理员可见) */}
+                    {isAdmin && (
+                      <button
+                        type="button"
+                        title={processes.length <= 1 ? "系统至少需保留一个工序特性" : `删除工序【${proc.name}】`}
+                        disabled={processes.length <= 1}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (processes.length > 1) {
+                            setConfirmDeleteProcess(proc);
+                          }
+                        }}
+                        className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-rose-950/50 disabled:opacity-20 disabled:hover:bg-transparent disabled:hover:text-slate-500 transition-colors"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                   </div>
                 </div>
                 <div className="mt-1 flex items-center justify-between text-[11px] text-slate-500">
@@ -190,47 +201,56 @@ export const ProcessConfigManager: React.FC<ProcessConfigManagerProps> = ({
             </h3>
           </div>
           <div className="flex items-center gap-2">
-            {/* 取消新增按钮 */}
-            {isCreatingNew && (
-              <button
-                type="button"
-                onClick={() => {
-                  setIsCreatingNew(false);
-                  if (currentProcess) setFormData(currentProcess);
-                }}
-                className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-medium transition-all"
-              >
-                取消新增
-              </button>
-            )}
+            {isAdmin ? (
+              <>
+                {/* 取消新增按钮 */}
+                {isCreatingNew && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsCreatingNew(false);
+                      if (currentProcess) setFormData(currentProcess);
+                    }}
+                    className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-medium transition-all"
+                  >
+                    取消新增
+                  </button>
+                )}
 
-            {/* 删除此工序按钮 */}
-            {!isCreatingNew && currentProcess && (
-              <button
-                type="button"
-                disabled={processes.length <= 1}
-                title={processes.length <= 1 ? "系统至少需保留一个工序特性，无法删除" : `删除当前工序【${currentProcess.name}】`}
-                onClick={() => {
-                  if (processes.length > 1) {
-                    setConfirmDeleteProcess(currentProcess);
-                  }
-                }}
-                className="px-3 py-1.5 bg-rose-600/10 hover:bg-rose-600 text-rose-400 hover:text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 border border-rose-500/30 transition-all disabled:opacity-30 disabled:cursor-not-allowed shadow-sm"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                删除此工序
-              </button>
-            )}
+                {/* 删除此工序按钮 */}
+                {!isCreatingNew && currentProcess && (
+                  <button
+                    type="button"
+                    disabled={processes.length <= 1}
+                    title={processes.length <= 1 ? "系统至少需保留一个工序特性，无法删除" : `删除当前工序【${currentProcess.name}】`}
+                    onClick={() => {
+                      if (processes.length > 1) {
+                        setConfirmDeleteProcess(currentProcess);
+                      }
+                    }}
+                    className="px-3 py-1.5 bg-rose-600/10 hover:bg-rose-600 text-rose-400 hover:text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 border border-rose-500/30 transition-all disabled:opacity-30 disabled:cursor-not-allowed shadow-sm"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    删除此工序
+                  </button>
+                )}
 
-            {/* 保存配置按钮 */}
-            <button
-              type="button"
-              onClick={handleSave}
-              className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all shadow active:scale-95"
-            >
-              <Check className="w-3.5 h-3.5" />
-              {isCreatingNew ? '创建并启用工序' : '保存配置'}
-            </button>
+                {/* 保存配置按钮 */}
+                <button
+                  type="button"
+                  onClick={handleSave}
+                  className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all shadow active:scale-95"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                  {isCreatingNew ? '创建并启用工序' : '保存配置'}
+                </button>
+              </>
+            ) : (
+              <div className="px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-center gap-1.5">
+                <Lock className="w-3.5 h-3.5 text-amber-400" />
+                <span>访客只读模式 (不可更改工序配置)</span>
+              </div>
+            )}
           </div>
         </div>
 

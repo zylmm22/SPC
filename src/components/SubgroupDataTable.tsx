@@ -20,7 +20,8 @@ import {
   CheckSquare,
   Award,
   ShieldCheck,
-  Sparkles
+  Sparkles,
+  Lock
 } from 'lucide-react';
 import { AuditLevelMode } from '../types/spc';
 
@@ -32,6 +33,7 @@ interface SubgroupDataTableProps {
   onBatchVoid: (subgroupIds: string[], reason: string) => void;
   onBatchRestore: (subgroupIds: string[]) => void;
   auditMode?: AuditLevelMode;
+  isAdmin?: boolean;
 }
 
 export const SubgroupDataTable: React.FC<SubgroupDataTableProps> = ({
@@ -42,6 +44,7 @@ export const SubgroupDataTable: React.FC<SubgroupDataTableProps> = ({
   onBatchVoid,
   onBatchRestore,
   auditMode = 'real',
+  isAdmin = true,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'valid' | 'voided' | 'violation'>('all');
@@ -129,26 +132,35 @@ export const SubgroupDataTable: React.FC<SubgroupDataTableProps> = ({
           {selectedIds.length > 0 && (
             <div className="flex items-center gap-2 bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-800 text-xs">
               <span className="text-slate-400">已选 {selectedIds.length} 项</span>
-              <button
-                onClick={() => {
-                  onBatchVoid(selectedIds, '批量作废异常排除');
-                  setSelectedIds([]);
-                }}
-                className="px-2 py-1 bg-rose-600 hover:bg-rose-500 text-white rounded text-[11px] font-medium flex items-center gap-1 transition-all"
-              >
-                <EyeOff className="w-3 h-3" />
-                批量作废并重算
-              </button>
-              <button
-                onClick={() => {
-                  onBatchRestore(selectedIds);
-                  setSelectedIds([]);
-                }}
-                className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-[11px] font-medium flex items-center gap-1 transition-all"
-              >
-                <RotateCcw className="w-3 h-3" />
-                批量恢复
-              </button>
+              {isAdmin ? (
+                <>
+                  <button
+                    onClick={() => {
+                      onBatchVoid(selectedIds, '批量作废异常排除');
+                      setSelectedIds([]);
+                    }}
+                    className="px-2 py-1 bg-rose-600 hover:bg-rose-500 text-white rounded text-[11px] font-medium flex items-center gap-1 transition-all"
+                  >
+                    <EyeOff className="w-3 h-3" />
+                    批量作废并重算
+                  </button>
+                  <button
+                    onClick={() => {
+                      onBatchRestore(selectedIds);
+                      setSelectedIds([]);
+                    }}
+                    className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-[11px] font-medium flex items-center gap-1 transition-all"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    批量恢复
+                  </button>
+                </>
+              ) : (
+                <span className="text-[11px] text-amber-400 flex items-center gap-1">
+                  <Lock className="w-3 h-3" />
+                  访客权限不可批量修改
+                </span>
+              )}
             </div>
           )}
         </div>
@@ -307,27 +319,34 @@ export const SubgroupDataTable: React.FC<SubgroupDataTableProps> = ({
 
                         {/* 操作栏：数据作废/剔除重算 */}
                         <td className="py-3 px-5 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                          {sg.isVoided ? (
-                            <button
-                              onClick={() => onRestoreSubgroup(sg.id)}
-                              className="px-2.5 py-1 bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white rounded-md text-xs font-medium transition-all border border-emerald-500/30 inline-flex items-center gap-1"
-                              title="恢复此子组并重新计算控制限"
-                            >
-                              <RotateCcw className="w-3 h-3" />
-                              恢复重算
-                            </button>
+                          {isAdmin ? (
+                            sg.isVoided ? (
+                              <button
+                                onClick={() => onRestoreSubgroup(sg.id)}
+                                className="px-2.5 py-1 bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white rounded-md text-xs font-medium transition-all border border-emerald-500/30 inline-flex items-center gap-1"
+                                title="恢复此子组并重新计算控制限"
+                              >
+                                <RotateCcw className="w-3 h-3" />
+                                恢复重算
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => {
+                                  setVoidReasonModalId(sg.id);
+                                  setVoidReasonInput('');
+                                }}
+                                className="px-2.5 py-1 bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white rounded-md text-xs font-medium transition-all border border-rose-500/30 inline-flex items-center gap-1"
+                                title="剔除此子组异常值并自动重新计算控制限"
+                              >
+                                <EyeOff className="w-3 h-3" />
+                                作废/剔除重算
+                              </button>
+                            )
                           ) : (
-                            <button
-                              onClick={() => {
-                                setVoidReasonModalId(sg.id);
-                                setVoidReasonInput('');
-                              }}
-                              className="px-2.5 py-1 bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white rounded-md text-xs font-medium transition-all border border-rose-500/30 inline-flex items-center gap-1"
-                              title="剔除此子组异常值并自动重新计算控制限"
-                            >
-                              <EyeOff className="w-3 h-3" />
-                              作废/剔除重算
-                            </button>
+                            <span className="text-[11px] text-slate-500 italic inline-flex items-center gap-1">
+                              <Lock className="w-3 h-3 text-slate-500" />
+                              只读
+                            </span>
                           )}
                         </td>
                       </tr>

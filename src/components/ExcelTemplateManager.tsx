@@ -19,7 +19,9 @@ import {
   Layers, 
   RefreshCw,
   Plus,
-  Table as TableIcon
+  Table as TableIcon,
+  Lock,
+  Eye
 } from 'lucide-react';
 
 interface ExcelTemplateManagerProps {
@@ -28,6 +30,7 @@ interface ExcelTemplateManagerProps {
   onUpdateProcess: (updated: ProcessCharacteristic) => void;
   onImportSubgroups: (newSubgroups: SubgroupDataPoint[], mode: 'replace' | 'append') => void;
   onResetDemoData: () => void;
+  isAdmin?: boolean;
 }
 
 export const ExcelTemplateManager: React.FC<ExcelTemplateManagerProps> = ({
@@ -36,6 +39,7 @@ export const ExcelTemplateManager: React.FC<ExcelTemplateManagerProps> = ({
   onUpdateProcess,
   onImportSubgroups,
   onResetDemoData,
+  isAdmin = true,
 }) => {
   // 模板搭建器状态
   const [templateTitle, setTemplateTitle] = useState(`${currentProcess.name}数据采集模板`);
@@ -302,49 +306,68 @@ export const ExcelTemplateManager: React.FC<ExcelTemplateManagerProps> = ({
             </div>
           </div>
 
-          <button
-            onClick={onResetDemoData}
-            className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all"
-            title="恢复内置的25批真实工业仿真数据"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            重置为标准工业样例
-          </button>
+          {isAdmin ? (
+            <button
+              onClick={onResetDemoData}
+              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all"
+              title="恢复内置的25批真实工业仿真数据"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              重置为标准工业样例
+            </button>
+          ) : (
+            <div className="px-3 py-1 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-center gap-1.5">
+              <Lock className="w-3.5 h-3.5 text-amber-400" />
+              <span>访客只读状态</span>
+            </div>
+          )}
         </div>
 
-        {/* 拖拽上传框 */}
-        <div
-          onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
-          onDragLeave={() => setIsDragging(false)}
-          onDrop={handleDrop}
-          className={`border-2 border-dashed rounded-xl p-8 text-center transition-all cursor-pointer ${
-            isDragging 
-              ? 'border-indigo-500 bg-indigo-500/10' 
-              : 'border-slate-800 hover:border-slate-700 bg-slate-950/60'
-          }`}
-          onClick={() => {
-            const input = document.createElement('input');
-            input.type = 'file';
-            input.accept = '.xlsx, .xls, .csv';
-            input.onchange = (e: any) => {
-              if (e.target.files && e.target.files[0]) {
-                handleFile(e.target.files[0]);
-              }
-            };
-            input.click();
-          }}
-        >
-          <FileSpreadsheet className="w-12 h-12 text-slate-600 mx-auto mb-3" />
-          <h4 className="text-sm font-semibold text-slate-200">
-            点击选择或拖拽 Excel / CSV 表格至此处上传
-          </h4>
-          <p className="text-xs text-slate-500 mt-1">
-            支持标准模板与自定义表头，系统自动识别【生产批号、采集时间、工序、设备号、测量值点阵】
-          </p>
-          <span className="inline-block mt-3 px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium rounded-lg shadow transition-all">
-            浏览本地文件
-          </span>
-        </div>
+        {/* 拖拽上传框 / 访客只读提示 */}
+        {isAdmin ? (
+          <div
+            onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+            onDragLeave={() => setIsDragging(false)}
+            onDrop={handleDrop}
+            className={`border-2 border-dashed rounded-xl p-8 text-center transition-all cursor-pointer ${
+              isDragging 
+                ? 'border-indigo-500 bg-indigo-500/10' 
+                : 'border-slate-800 hover:border-slate-700 bg-slate-950/60'
+            }`}
+            onClick={() => {
+              const input = document.createElement('input');
+              input.type = 'file';
+              input.accept = '.xlsx, .xls, .csv';
+              input.onchange = (e: any) => {
+                if (e.target.files && e.target.files[0]) {
+                  handleFile(e.target.files[0]);
+                }
+              };
+              input.click();
+            }}
+          >
+            <FileSpreadsheet className="w-12 h-12 text-slate-600 mx-auto mb-3" />
+            <h4 className="text-sm font-semibold text-slate-200">
+              点击选择或拖拽 Excel / CSV 表格至此处上传
+            </h4>
+            <p className="text-xs text-slate-500 mt-1">
+              支持标准模板与自定义表头，系统自动识别【生产批号、采集时间、工序、设备号、测量值点阵】
+            </p>
+            <span className="inline-block mt-3 px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium rounded-lg shadow transition-all">
+              浏览本地文件
+            </span>
+          </div>
+        ) : (
+          <div className="border border-dashed border-amber-500/30 bg-amber-950/10 rounded-xl p-8 text-center space-y-2">
+            <Lock className="w-10 h-10 text-amber-400/80 mx-auto" />
+            <h4 className="text-sm font-semibold text-slate-200">
+              当前为访客只读模式，已禁用 Excel 上传与数据导入
+            </h4>
+            <p className="text-xs text-slate-400 max-w-md mx-auto">
+              您当前以访客权限登录，仅可下载上方标准模板或查阅历史图表。如需导入新批次或追加数据，请在页面顶部切换为<b>管理员账号</b>。
+            </p>
+          </div>
+        )}
 
         {/* 错误提示 */}
         {uploadError && (

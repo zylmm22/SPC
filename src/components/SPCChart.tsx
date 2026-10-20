@@ -21,7 +21,9 @@ import {
   Activity,
   Award,
   ShieldCheck,
-  Settings
+  Settings,
+  Lock,
+  Eye
 } from 'lucide-react';
 
 interface SPCChartProps {
@@ -38,6 +40,7 @@ interface SPCChartProps {
   gjbConfig?: GJBAuditConfig;
   onOpenAuditModal?: (type: 'cn' | 'gjb') => void;
   onSwitchAuditMode?: (mode: AuditLevelMode) => void;
+  isAdmin?: boolean;
 }
 
 export const SPCChart: React.FC<SPCChartProps> = ({
@@ -54,6 +57,7 @@ export const SPCChart: React.FC<SPCChartProps> = ({
   gjbConfig,
   onOpenAuditModal,
   onSwitchAuditMode,
+  isAdmin = true,
 }) => {
   const [selectedPoint, setSelectedPoint] = useState<SubgroupDataPoint | null>(null);
   const [hoveredPoint, setHoveredPoint] = useState<SubgroupDataPoint | null>(null);
@@ -997,37 +1001,44 @@ export const SPCChart: React.FC<SPCChartProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
-            {selectedPoint.isVoided ? (
-              <button
-                onClick={() => {
-                  onRestoreSubgroup(selectedPoint.id);
-                  setSelectedPoint(null);
-                }}
-                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all shadow"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                恢复子组并重新计算控制限
-              </button>
-            ) : (
-              <div className="flex items-center gap-2">
-                <input
-                  type="text"
-                  placeholder="作废原因 (如: 调机首件/异常排除)"
-                  value={voidReasonInput}
-                  onChange={(e) => setVoidReasonInput(e.target.value)}
-                  className="px-2.5 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-rose-500 w-52"
-                />
+            {isAdmin ? (
+              selectedPoint.isVoided ? (
                 <button
                   onClick={() => {
-                    onVoidSubgroup(selectedPoint.id, voidReasonInput || '异常值作废排除');
-                    setVoidReasonInput('');
+                    onRestoreSubgroup(selectedPoint.id);
                     setSelectedPoint(null);
                   }}
-                  className="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all shadow"
+                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all shadow"
                 >
-                  <EyeOff className="w-3.5 h-3.5" />
-                  作废此子组并重新计算控制限
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  恢复子组并重新计算控制限
                 </button>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    placeholder="作废原因 (如: 调机首件/异常排除)"
+                    value={voidReasonInput}
+                    onChange={(e) => setVoidReasonInput(e.target.value)}
+                    className="px-2.5 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-rose-500 w-52"
+                  />
+                  <button
+                    onClick={() => {
+                      onVoidSubgroup(selectedPoint.id, voidReasonInput || '异常值作废排除');
+                      setVoidReasonInput('');
+                      setSelectedPoint(null);
+                    }}
+                    className="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all shadow"
+                  >
+                    <EyeOff className="w-3.5 h-3.5" />
+                    作废此子组并重新计算控制限
+                  </button>
+                </div>
+              )
+            ) : (
+              <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-950/80 border border-amber-500/30 rounded-lg text-xs text-amber-300">
+                <Lock className="w-3.5 h-3.5 text-amber-400" />
+                <span>访客只读模式：仅可查看点位信息，不可作废数据</span>
               </div>
             )}
             <button

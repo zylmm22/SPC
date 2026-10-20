@@ -165,3 +165,33 @@ export interface GJBAuditConfig {
   isConfigured: boolean;      // 是否已配置过
 }
 
+/**
+ * 用户角色与权限定义
+ * 管理员 (admin): 拥有全部权限 (增删改工序、导入/追加数据、作废/恢复、审查参数配置)
+ * 访客 (guest): 只能点选查看与分析，不能更改任何内容
+ */
+export type UserRole = 'admin' | 'guest';
+
+export interface UserAccount {
+  id: string;
+  username: string;
+  name: string;
+  role: UserRole;
+  avatar?: string;
+  title: string;
+  description: string;
+}
+
+/**
+ * 系统完整数据备份包格式 (支持 Netlify 纯静态环境下全量导出与跨电脑恢复)
+ */
+export interface SPCSystemBackup {
+  version: string;
+  exportedAt: string;
+  processes: ProcessCharacteristic[];
+  subgroupsMap: Record<string, SubgroupDataPoint[]>;
+  activeProcessId: string;
+  cnConfig?: CNAuditConfig;
+  gjbConfig?: GJBAuditConfig;
+}
+
