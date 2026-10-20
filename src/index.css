@@ -108,3 +108,39 @@ html.light [class*="bg-emerald-950"] {
   border-color: #bbf7d0 !important;
   font-weight: 600 !important;
 }
+
+/* 浅色模式下：将 CPK 深黑卡片转为轻奢淡雅的浅蓝微光卡片，文字清晰锐利 */
+html.light [class*="from-slate-950"],
+html.light [class*="via-slate-950"] {
+  background-image: linear-gradient(135deg, #f8fafc 0%, #eef2ff 100%) !important;
+  background-color: #f8fafc !important;
+  border-color: #c7d2fe !important; /* 柔和浅紫蓝边框 */
+}
+
+/* 强制该卡片内所有标题与说明文字为高对比度深色 */
+html.light [class*="from-slate-950"] label,
+html.light [class*="from-slate-950"] span,
+html.light [class*="from-slate-950"] p {
+  color: #1e293b !important;
+}
+
+/* 提示小字转为柔和中灰 */
+html.light [class*="from-slate-950"] span:last-child {
+  color: #64748b !important;
+}
+
+/* 输入框在浅色下保持纯白底与深黑字 */
+html.light [class*="from-slate-950"] input {
+  background-color: #ffffff !important;
+  border-color: #a5b4fc !important;
+  color: #0f172a !important;
+}
+
+/* 快捷按钮在浅色下的高对比度样式 (1.33 / 1.5 / 1.67) */
+html.light [class*="from-slate-950"] button {
+  border: 1px solid #cbd5e1;
+}
+html.light [class*="from-slate-950"] button:not(.bg-indigo-600) {
+  background-color: #ffffff !important;
+  color: #334155 !important;
+}
