@@ -23,7 +23,8 @@ import {
   ShieldCheck,
   Settings,
   Lock,
-  Eye
+  Eye,
+  Calendar
 } from 'lucide-react';
 
 interface SPCChartProps {
@@ -64,6 +65,9 @@ export const SPCChart: React.FC<SPCChartProps> = ({
   const [showZones, setShowZones] = useState<boolean>(true);
   const [showSpecLimits, setShowSpecLimits] = useState<boolean>(true);
   const [voidReasonInput, setVoidReasonInput] = useState<string>('');
+  
+  // X 轴显示模式: 批次顺序(1,2,3) | 生产批次号 | 采集日期时间 (支持下拉选择)
+  const [xAxisMode, setXAxisMode] = useState<'seq' | 'batchNo' | 'sampleTime'>('seq');
 
   const isDualChart = ['xbar-r', 'xbar-s', 'i-mr'].includes(process.chartType);
 
@@ -92,16 +96,68 @@ export const SPCChart: React.FC<SPCChartProps> = ({
     };
   }, [subgroups]);
 
-  // SVG 画布尺寸配置
+  // SVG 画布尺寸配置 (为 X 轴刻度及标注预留清晰下边距)
   const svgWidth = 980;
-  const mainHeight = isDualChart ? 280 : 360;
-  const subHeight = isDualChart ? 180 : 0;
-  const padding = { top: 25, right: 90, bottom: 35, left: 65 };
+  const mainHeight = isDualChart ? 285 : 365;
+  const subHeight = isDualChart ? 190 : 0;
+  const padding = { top: 25, right: 90, bottom: 38, left: 65 };
 
   // 绘图区域有效尺寸
   const plotWidth = svgWidth - padding.left - padding.right;
   const plotMainHeight = mainHeight - padding.top - padding.bottom;
   const plotSubHeight = subHeight - padding.top - padding.bottom;
+
+  // 提取副图对应统计量 (根据图表类型精确区分：Xbar-S 图取 S 标差，Xbar-R 图取 R 极差，I-MR 图取 MR 移动极差)
+  const getSubPointVal = (sg: SubgroupDataPoint): number => {
+    if (process.chartType === 'xbar-s') {
+      return sg.stdDev !== undefined ? sg.stdDev : (sg.range ?? 0);
+    }
+    if (process.chartType === 'i-mr') {
+      return sg.movingRange !== undefined ? sg.movingRange : (sg.range ?? 0);
+    }
+    return sg.range !== undefined ? sg.range : (sg.stdDev ?? sg.movingRange ?? 0);
+  };
+
+  // X 轴标签智能格式化 (支持 批次顺序 1,2,3 / 生产批次号 / 采集日期时间)
+  const formatXAxisLabel = (sg: SubgroupDataPoint, mode: 'seq' | 'batchNo' | 'sampleTime') => {
+    if (mode === 'seq') {
+      return `${sg.seq}`;
+    }
+    if (mode === 'batchNo') {
+      if (!sg.batchNo) return `#${sg.seq}`;
+      // 精简规范批号展示，去除生硬前缀负号避免视觉误读
+      if (sg.batchNo.startsWith('LOT-')) {
+        const parts = sg.batchNo.split('-');
+        if (parts.length >= 3) {
+          return `LOT-${parts[parts.length - 1]}`;
+        }
+      }
+      return sg.batchNo.length > 10 ? sg.batchNo.slice(-7) : sg.batchNo;
+    }
+    if (mode === 'sampleTime') {
+      if (!sg.sampleTime) return `#${sg.seq}`;
+      const parts = sg.sampleTime.trim().split(' ');
+      if (parts.length >= 2) {
+        const d = parts[0].length >= 10 ? parts[0].slice(5) : parts[0];
+        const t = parts[1].slice(0, 5);
+        return `${d} ${t}`;
+      }
+      return sg.sampleTime.length >= 10 ? sg.sampleTime.slice(5) : sg.sampleTime;
+    }
+    return `${sg.seq}`;
+  };
+
+  // 根据当前 X 轴显示模式自适应调整刻度步长，保证美观不遮挡重叠
+  const tickInterval = useMemo(() => {
+    if (subgroups.length <= 10) return 1;
+    if (xAxisMode === 'sampleTime') {
+      return Math.max(1, Math.ceil(subgroups.length / 8));
+    }
+    if (xAxisMode === 'batchNo') {
+      return Math.max(1, Math.ceil(subgroups.length / 10));
+    }
+    return Math.max(1, Math.ceil(subgroups.length / 16));
+  }, [subgroups.length, xAxisMode]);
 
   // 主图 Y 轴范围计算
   const mainYRange = useMemo(() => {
@@ -128,10 +184,10 @@ export const SPCChart: React.FC<SPCChartProps> = ({
     };
   }, [subgroups, limits, process, showSpecLimits]);
 
-  // 副图 Y 轴范围计算 (R 或 S 或 MR)
+  // 副图 Y 轴范围计算 (精确依据 S 或 R 或 MR)
   const subYRange = useMemo(() => {
     if (!isDualChart) return { min: 0, max: 1 };
-    const subValues = subgroups.map(s => s.range ?? s.stdDev ?? s.movingRange ?? 0);
+    const subValues = subgroups.map(s => getSubPointVal(s));
     const subUcl = limits.subUcl ?? 1;
     const subLcl = limits.subLcl ?? 0;
     const subCl = limits.subCl ?? 0.5;
@@ -148,7 +204,7 @@ export const SPCChart: React.FC<SPCChartProps> = ({
       min: minVal - margin,
       max: maxVal + margin
     };
-  }, [subgroups, limits, isDualChart]);
+  }, [subgroups, limits, isDualChart, process.chartType]);
 
   // 控制限小数精度智能计算与格式化 (解决 LCL 为 0 时显示不清晰、格式不对齐的问题)
   const subDecimals = useMemo(() => {
@@ -362,8 +418,25 @@ export const SPCChart: React.FC<SPCChartProps> = ({
           </div>
         </div>
 
-        {/* 控制图辅助显示开关 */}
-        <div className="flex items-center gap-2 text-xs">
+        {/* 控制图辅助显示开关与 X 轴坐标显示下拉选择 */}
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          {/* X 轴刻度显示下拉选择 (支持 批次顺序 1、2、3，批次号、采集日期) */}
+          <div className="flex items-center gap-1.5 bg-slate-950/80 border border-indigo-900/60 rounded-lg px-2.5 py-1 text-xs shadow-inner">
+            <span className="text-slate-400 font-medium flex items-center gap-1 whitespace-nowrap">
+              <Calendar className="w-3.5 h-3.5 text-indigo-400" />
+              X轴显示:
+            </span>
+            <select
+              value={xAxisMode}
+              onChange={(e) => setXAxisMode(e.target.value as 'seq' | 'batchNo' | 'sampleTime')}
+              className="bg-slate-900 text-indigo-200 font-medium text-xs rounded border border-indigo-950/80 px-2 py-0.5 outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+            >
+              <option value="seq">批次顺序 (1, 2, 3...)</option>
+              <option value="batchNo">生产批次号 (如 LOT-047)</option>
+              <option value="sampleTime">采集日期时间</option>
+            </select>
+          </div>
+
           <button
             onClick={() => setShowZones(!showZones)}
             className={`px-2.5 py-1.5 rounded-lg border transition-all flex items-center gap-1.5 ${
@@ -787,8 +860,8 @@ export const SPCChart: React.FC<SPCChartProps> = ({
                     />
                   )}
 
-                  {/* X 轴批次号/序号刻度 */}
-                  {(idx % Math.ceil(subgroups.length / 12) === 0 || idx === subgroups.length - 1) && (
+                  {/* X 轴批次号/序号/日期刻度 (自适应对齐，支持三种模式) */}
+                  {(idx % tickInterval === 0 || idx === subgroups.length - 1) && (
                     <text
                       x={x}
                       y={padding.top + plotMainHeight + 18}
@@ -796,12 +869,23 @@ export const SPCChart: React.FC<SPCChartProps> = ({
                       fontSize="9"
                       textAnchor="middle"
                     >
-                      {sg.batchNo ? sg.batchNo.slice(-4) : `#${sg.seq}`}
+                      {formatXAxisLabel(sg, xAxisMode)}
                     </text>
                   )}
                 </g>
               );
             })}
+
+            {/* 主图 X 轴当前坐标维度指示 */}
+            <text
+              x={padding.left + plotWidth}
+              y={padding.top + plotMainHeight + 32}
+              fill="#64748b"
+              fontSize="9"
+              textAnchor="end"
+            >
+              [X轴: {xAxisMode === 'seq' ? '批次顺序 1,2,3...' : xAxisMode === 'batchNo' ? '生产批次号' : '采集日期时间'}]
+            </text>
 
             {/* 左侧主图标题与单位 */}
             <text
@@ -906,10 +990,10 @@ export const SPCChart: React.FC<SPCChartProps> = ({
                 </>
               )}
 
-              {/* 副图折线 */}
+              {/* 副图折线 (准确采用当前副图对应值：S图为标准差，R图为极差，MR图为移动极差) */}
               <path
                 d={subgroups.map((sg, idx) => {
-                  const val = sg.range ?? sg.stdDev ?? sg.movingRange ?? 0;
+                  const val = getSubPointVal(sg);
                   const x = getX(idx);
                   const y = getSubY(val);
                   return `${idx === 0 ? 'M' : 'L'} ${x} ${y}`;
@@ -923,11 +1007,12 @@ export const SPCChart: React.FC<SPCChartProps> = ({
 
               {/* 副图数据点与 X 轴刻度 */}
               {subgroups.map((sg, idx) => {
-                const val = sg.range ?? sg.stdDev ?? sg.movingRange ?? 0;
+                const val = getSubPointVal(sg);
                 const x = getX(idx);
                 const y = getSubY(val);
                 const isVoided = sg.isVoided;
                 const isSelected = selectedPoint?.id === sg.id;
+                const hasSubViolations = sg.violations && sg.violations.some(v => v.chartPart === 'sub');
 
                 return (
                   <g 
@@ -937,6 +1022,15 @@ export const SPCChart: React.FC<SPCChartProps> = ({
                   >
                     {isVoided ? (
                       <circle cx={x} cy={y} r="4" fill="#0f172a" stroke="#94a3b8" strokeWidth="1.5" strokeDasharray="2,2" />
+                    ) : hasSubViolations ? (
+                      <circle
+                        cx={x}
+                        cy={y}
+                        r={isSelected ? 6 : 5}
+                        fill="#ef4444"
+                        stroke="#ffffff"
+                        strokeWidth="1.5"
+                      />
                     ) : (
                       <circle
                         cx={x}
@@ -948,8 +1042,8 @@ export const SPCChart: React.FC<SPCChartProps> = ({
                       />
                     )}
 
-                    {/* 副图 X 轴批次号/序号刻度 (参照上方均值图，对齐显示) */}
-                    {(idx % Math.ceil(subgroups.length / 12) === 0 || idx === subgroups.length - 1) && (
+                    {/* 副图 X 轴批次号/序号/日期刻度 (与上方主图联动对齐) */}
+                    {(idx % tickInterval === 0 || idx === subgroups.length - 1) && (
                       <text
                         x={x}
                         y={padding.top + plotSubHeight + 18}
@@ -957,12 +1051,23 @@ export const SPCChart: React.FC<SPCChartProps> = ({
                         fontSize="9"
                         textAnchor="middle"
                       >
-                        {sg.batchNo ? sg.batchNo.slice(-4) : `#${sg.seq}`}
+                        {formatXAxisLabel(sg, xAxisMode)}
                       </text>
                     )}
                   </g>
                 );
               })}
+
+              {/* 副图 X 轴当前坐标维度指示 */}
+              <text
+                x={padding.left + plotWidth}
+                y={padding.top + plotSubHeight + 32}
+                fill="#64748b"
+                fontSize="9"
+                textAnchor="end"
+              >
+                [X轴: {xAxisMode === 'seq' ? '批次顺序 1,2,3...' : xAxisMode === 'batchNo' ? '生产批次号' : '采集日期时间'}]
+              </text>
 
               {/* 副图标题 */}
               <text
