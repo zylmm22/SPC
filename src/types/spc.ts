@@ -142,14 +142,17 @@ export type AuditLevelMode = 'real' | 'cn' | 'gjb';
  * 需要输入：目标 CPK、控制上下限要求 (UCL/CL/LCL)、规范上下限 (USL/SL/LSL)
  */
 export interface CNAuditConfig {
-  targetCpk: number;          // CPK 值要求 (如 1.33 或 1.50)
-  ucl: number;                // 控制上限要求
-  cl: number;                 // 控制中心线要求
-  lcl: number;                // 控制下限要求
+  targetCpk: number;          // CPK 值要求 (如 1.33 或 1.67)
+  batchCount: number;         // 模拟生成的批次数 (如 50 批)
+  sampleSize: number;         // 子组大小 n (如 5)
+  processId?: string;         // 绑定的工序 ID
+  ucl?: number;               // 控制上限
+  cl?: number;                // 控制中心线
+  lcl?: number;               // 控制下限
   usl: number;                // 规范上限 (USL)
   sl: number;                 // 规范中心值 (SL)
   lsl: number;                // 规范下限 (LSL)
-  isConfigured: boolean;      // 是否已配置过 (首次输入后记录，后续不用重复输入)
+  isConfigured: boolean;
 }
 
 /**
@@ -159,10 +162,13 @@ export interface CNAuditConfig {
  */
 export interface GJBAuditConfig {
   targetCpk: number;          // 国军标严苛 CPK 要求 (默认 1.67)
+  batchCount: number;         // 模拟生成的批次数 (如 50 批)
+  sampleSize: number;         // 子组大小 n (如 5)
+  processId?: string;         // 绑定的工序 ID
   usl: number;                // 规范上限 (USL)
   sl: number;                 // 规范中心值 (SL)
   lsl: number;                // 规范下限 (LSL)
-  isConfigured: boolean;      // 是否已配置过
+  isConfigured: boolean;
 }
 
 /**

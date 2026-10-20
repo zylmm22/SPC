@@ -1,11 +1,6 @@
 /**
  * 智能 SPC 统计过程控制系统 - 主应用程序
  * 严格遵照工业制造质量控制规范与用户定制需求实现
- * 包含：
- * 1. 账号权限体系（管理员全部权限 vs 访客只读点选查看权限）
- * 2. 客户端本地存储双向持久化引擎（解决 Netlify 纯静态外网部署打开默认页面、数据不保存问题）
- * 3. 体系审查专项功能（“CN等级”与“国军标等级”自动数学反推模拟）
- * 4. 增量追加/全量覆盖 Excel 导入与数据作废重算
  */
 
 import React, { useState, useEffect, useMemo } from 'react';
@@ -70,8 +65,50 @@ import {
   Eye,
   Lock,
   Database,
-  User
+  User,
+  Sun,
+  Moon,
+  Monitor
 } from 'lucide-react';
+
+// ================= 页面主题工具函数 (内置内联，无需外部文件) =================
+export type ThemeMode = 'system' | 'dark' | 'light';
+const THEME_STORAGE_KEY = 'spc_theme_mode';
+
+function getStoredThemeMode(): ThemeMode {
+  try {
+    const saved = localStorage.getItem(THEME_STORAGE_KEY) as ThemeMode;
+    if (saved && ['system', 'dark', 'light'].includes(saved)) return saved;
+  } catch (e) {}
+  return 'system';
+}
+
+function saveStoredThemeMode(mode: ThemeMode) {
+  try {
+    localStorage.setItem(THEME_STORAGE_KEY, mode);
+  } catch (e) {}
+}
+
+function isDarkActive(mode: ThemeMode): boolean {
+  if (mode === 'dark') return true;
+  if (mode === 'light') return false;
+  return typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+}
+
+function applyThemeToDOM(mode: ThemeMode) {
+  if (typeof document === 'undefined') return;
+  const isDark = isDarkActive(mode);
+  const root = document.documentElement;
+  if (isDark) {
+    root.classList.add('dark');
+    root.classList.remove('light');
+    root.style.colorScheme = 'dark';
+  } else {
+    root.classList.remove('dark');
+    root.classList.add('light');
+    root.style.colorScheme = 'light';
+  }
+}
 
 export default function App() {
   // ================= 账号与权限控制状态 =================
@@ -80,40 +117,58 @@ export default function App() {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isBackupModalOpen, setIsBackupModalOpen] = useState(false);
 
-  // ================= 工序特性与数据集合 (接入本地持久化存储，保障 Netlify 外网访问) =================
+  // ================= 页面主题控制 (系统 / 深色 / 浅色) =================
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => getStoredThemeMode());
+  const [isDark, setIsDark] = useState<boolean>(() => isDarkActive(getStoredThemeMode()));
+  const [showThemeMenu, setShowThemeMenu] = useState(false);
+
+  // 监听并应用主题切换
+  useEffect(() => {
+    applyThemeToDOM(themeMode);
+    setIsDark(isDarkActive(themeMode));
+    saveStoredThemeMode(themeMode);
+
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const handleChange = () => {
+      if (themeMode === 'system') {
+        applyThemeToDOM('system');
+        setIsDark(isDarkActive('system'));
+      }
+    };
+    mediaQuery.addEventListener('change', handleChange);
+    return () => mediaQuery.removeEventListener('change', handleChange);
+  }, [themeMode]);
+
+  const handleSelectTheme = (mode: ThemeMode) => {
+    setThemeMode(mode);
+    setShowThemeMenu(false);
+    const label = mode === 'system' ? '跟随系统' : mode === 'dark' ? '深色模式' : '浅色模式';
+    showToast(`已切换至【${label}】`);
+  };
+
+  // ================= 工序特性与数据集合 =================
   const [processes, setProcesses] = useState<ProcessCharacteristic[]>(() => getStoredProcesses());
   const [activeProcessId, setActiveProcessId] = useState<string>(() => {
     const procs = getStoredProcesses();
     return getStoredActiveProcessId(procs[0]?.id || INITIAL_PROCESSES[0].id);
   });
   
-  // 真实子组原始数据集合 (优先从持久化字典加载)
   const [realSubgroups, setRealSubgroups] = useState<SubgroupDataPoint[]>(() => {
     const procs = getStoredProcesses();
     const curr = procs.find(p => p.id === getStoredActiveProcessId(procs[0]?.id || INITIAL_PROCESSES[0].id)) || procs[0] || INITIAL_PROCESSES[0];
     return getStoredSubgroupsForProcess(curr);
   });
 
-  // ================= 审查模拟模式状态 (用于审查使用) =================
+  // ================= 审查模拟模式状态 =================
   const [auditMode, setAuditMode] = useState<AuditLevelMode>('real');
-
-  // CN 等级参数配置持久化 (首次输入后记录，后续免重复输入)
   const [cnConfig, setCnConfig] = useState<CNAuditConfig>(() => getStoredCNConfig());
-
-  // 国军标等级参数配置持久化 (首次输入后记录，后续免重复输入)
   const [gjbConfig, setGjbConfig] = useState<GJBAuditConfig>(() => getStoredGJBConfig());
 
-  // 参数配置弹窗状态
   const [isAuditModalOpen, setIsAuditModalOpen] = useState(false);
   const [auditModalType, setAuditModalType] = useState<'cn' | 'gjb'>('cn');
 
-  // Nelson 8 大判异规则勾选状态 (默认启用当前工序预置规则)
   const [enabledRules, setEnabledRules] = useState<number[]>([1, 2, 3, 4, 5, 6, 7, 8]);
-
-  // 当前主导航 Tab
   const [activeTab, setActiveTab] = useState<'chart' | 'subgroups' | 'capability' | 'excel' | 'config'>('chart');
-
-  // 全局操作反馈 Toast
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const showToast = (msg: string) => {
@@ -121,12 +176,10 @@ export default function App() {
     setTimeout(() => setToastMessage(null), 3500);
   };
 
-  // 获取当前选中的工序对象
   const currentProcess = useMemo(() => {
     return processes.find(p => p.id === activeProcessId) || processes[0];
   }, [processes, activeProcessId]);
 
-  // 切换工序操作 (立即从持久化存储中读取，且同步激活 ID)
   const handleSelectProcess = (newProcessId: string) => {
     setActiveProcessId(newProcessId);
     saveStoredActiveProcessId(newProcessId);
@@ -135,27 +188,14 @@ export default function App() {
     const stored = getStoredSubgroupsForProcess(targetProc);
     setRealSubgroups(stored);
     setEnabledRules(targetProc.activeRules || [1, 2, 3, 4, 5, 6, 7, 8]);
-
-    // 若有后端服务则尝试同步
-    fetch(`/api/spc/subgroups?processId=${newProcessId}`)
-      .then(res => res.json())
-      .then(res => {
-        if (res.success && res.data && Array.isArray(res.data) && res.data.length > 0) {
-          setRealSubgroups(res.data);
-          saveStoredSubgroupsForProcess(newProcessId, res.data);
-        }
-      })
-      .catch(() => {});
   };
 
-  // 账号切换处理
   const handleSwitchUser = (user: UserAccount) => {
     setCurrentUser(user);
     saveStoredCurrentUser(user);
     showToast(`已切换身份为【${user.name}】（${user.role === 'admin' ? '全部管理权限' : '只读浏览权限'}）`);
   };
 
-  // 数据备份恢复回调
   const handleDataRestored = () => {
     const refreshedProcesses = getStoredProcesses();
     const refreshedActiveId = getStoredActiveProcessId(refreshedProcesses[0]?.id || INITIAL_PROCESSES[0].id);
@@ -167,12 +207,13 @@ export default function App() {
     setGjbConfig(getStoredGJBConfig());
   };
 
-  // ================= 核心子组数据调度 (审查模拟机制) =================
-  // 要求：模拟后子组数据抓取真实数据的除测量值以外的数据（生产批次号、采集日期等）
+  // 审查模拟反推数据调度
   const activeSubgroups = useMemo(() => {
     if (auditMode === 'cn') {
       return generateAuditSimulationSubgroups(realSubgroups, currentProcess.chartType, 'cn', {
         targetCpk: cnConfig.targetCpk,
+        batchCount: cnConfig.batchCount,
+        sampleSize: cnConfig.sampleSize,
         usl: cnConfig.usl,
         sl: cnConfig.sl,
         lsl: cnConfig.lsl,
@@ -184,6 +225,8 @@ export default function App() {
     if (auditMode === 'gjb') {
       return generateAuditSimulationSubgroups(realSubgroups, currentProcess.chartType, 'gjb', {
         targetCpk: gjbConfig.targetCpk,
+        batchCount: gjbConfig.batchCount,
+        sampleSize: gjbConfig.sampleSize,
         usl: gjbConfig.usl,
         sl: gjbConfig.sl,
         lsl: gjbConfig.lsl
@@ -192,8 +235,6 @@ export default function App() {
     return realSubgroups;
   }, [realSubgroups, auditMode, currentProcess.chartType, cnConfig, gjbConfig]);
 
-  // 1. 核心计算：根据样本自动计算控制限 (UCL / CL / LCL)
-  // 如果是 CN 审查模式且用户显式指定了控制限要求，直接优先采用用户输入的控制限
   const controlLimits: ControlLimits = useMemo(() => {
     const calculated = calculateControlLimits(activeSubgroups, currentProcess.chartType);
     if (auditMode === 'cn' && cnConfig.ucl && cnConfig.cl && cnConfig.lcl) {
@@ -208,9 +249,7 @@ export default function App() {
     return calculated;
   }, [activeSubgroups, currentProcess.chartType, auditMode, cnConfig]);
 
-  // 2. 核心计算：Nelson 8 大判异准则实时评估 (根据用户勾选的 enabledRules)
   const evaluatedSubgroups: SubgroupDataPoint[] = useMemo(() => {
-    // 均值主图判异
     const mainEvaluated = evaluateNelsonRules(
       activeSubgroups, 
       controlLimits, 
@@ -219,20 +258,18 @@ export default function App() {
       currentProcess.chartType
     );
 
-    // 副图判异 (S图 / R图 / MR图)
     if (['xbar-r', 'xbar-s', 'i-mr'].includes(currentProcess.chartType)) {
       return evaluateNelsonRules(
         mainEvaluated, 
         controlLimits, 
         enabledRules, 
         'sub', 
-        currentProcess.chartType // ✅ 必须传入当前图表类型，让引擎精准提取 stdDev
+        currentProcess.chartType
       );
     }
     return mainEvaluated;
   }, [activeSubgroups, controlLimits, enabledRules, currentProcess.chartType]);
 
-  // 3. 核心计算：过程能力分析 (Cp, Cpk, Pp, Ppk)
   const processCapability = useMemo(() => {
     const usl = auditMode === 'cn' ? cnConfig.usl : (auditMode === 'gjb' ? gjbConfig.usl : currentProcess.usl);
     const sl = auditMode === 'cn' ? cnConfig.sl : (auditMode === 'gjb' ? gjbConfig.sl : currentProcess.sl);
@@ -247,7 +284,6 @@ export default function App() {
     );
   }, [activeSubgroups, controlLimits, currentProcess, auditMode, cnConfig, gjbConfig]);
 
-  // 规则勾选切换
   const handleToggleRule = (ruleId: number) => {
     setEnabledRules(prev => 
       prev.includes(ruleId) ? prev.filter(id => id !== ruleId) : [...prev, ruleId]
@@ -258,10 +294,9 @@ export default function App() {
     setEnabledRules(enable ? [1, 2, 3, 4, 5, 6, 7, 8] : []);
   };
 
-  // 数据作废/剔除异常值 (权限拦截与持久化)
   const handleVoidSubgroup = (subgroupId: string, reason?: string) => {
     if (!isAdmin) {
-      showToast('当前为访客权限，仅支持浏览，无法作废数据！请登录管理员账号。');
+      showToast('当前为访客权限，仅支持浏览，无法作废数据！');
       return;
     }
     const defaultReason = reason || '异常值作废排除';
@@ -279,20 +314,12 @@ export default function App() {
 
     setRealSubgroups(updated);
     saveStoredSubgroupsForProcess(activeProcessId, updated);
-
-    fetch('/api/spc/subgroups/void', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ processId: activeProcessId, subgroupId, reason: defaultReason })
-    }).catch(() => {});
-
-    showToast(`已成功作废子组，控制限已自动重新计算并已保存！`);
+    showToast(`已成功作废子组，控制限已重新计算！`);
   };
 
-  // 恢复作废子组 (权限拦截与持久化)
   const handleRestoreSubgroup = (subgroupId: string) => {
     if (!isAdmin) {
-      showToast('当前为访客权限，仅支持浏览，无法恢复数据！请登录管理员账号。');
+      showToast('当前为访客权限，无法恢复数据！');
       return;
     }
     const updated = realSubgroups.map(sg => {
@@ -305,52 +332,24 @@ export default function App() {
 
     setRealSubgroups(updated);
     saveStoredSubgroupsForProcess(activeProcessId, updated);
-
-    fetch('/api/spc/subgroups/restore', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ processId: activeProcessId, subgroupId })
-    }).catch(() => {});
-
-    showToast(`已恢复子组，控制限已同步更新并已保存！`);
+    showToast(`已恢复子组，控制限已同步更新！`);
   };
 
-  // 批量作废
   const handleBatchVoid = (subgroupIds: string[], reason: string) => {
-    if (!isAdmin) {
-      showToast('当前为访客权限，无法进行批量作废操作！');
-      return;
-    }
+    if (!isAdmin) return;
     const updated = realSubgroups.map(sg => {
       if (subgroupIds.includes(sg.id) || subgroupIds.includes(`sim-${sg.id}`)) {
-        return {
-          ...sg,
-          isVoided: true,
-          voidReason: reason,
-          voidedAt: new Date().toISOString()
-        };
+        return { ...sg, isVoided: true, voidReason: reason, voidedAt: new Date().toISOString() };
       }
       return sg;
     });
-
     setRealSubgroups(updated);
     saveStoredSubgroupsForProcess(activeProcessId, updated);
-
-    fetch('/api/spc/subgroups/batch-void', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ processId: activeProcessId, subgroupIds, reason })
-    }).catch(() => {});
-
-    showToast(`已批量作废 ${subgroupIds.length} 个子组，控制限已重新计算并已保存！`);
+    showToast(`已批量作废 ${subgroupIds.length} 个子组！`);
   };
 
-  // 批量恢复
   const handleBatchRestore = (subgroupIds: string[]) => {
-    if (!isAdmin) {
-      showToast('当前为访客权限，无法进行批量恢复操作！');
-      return;
-    }
+    if (!isAdmin) return;
     const updated = realSubgroups.map(sg => {
       if (subgroupIds.includes(sg.id) || subgroupIds.includes(`sim-${sg.id}`)) {
         const { voidReason, voidedAt, ...rest } = sg;
@@ -358,288 +357,209 @@ export default function App() {
       }
       return sg;
     });
-
     setRealSubgroups(updated);
     saveStoredSubgroupsForProcess(activeProcessId, updated);
-
-    fetch('/api/spc/subgroups/batch-restore', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ processId: activeProcessId, subgroupIds })
-    }).catch(() => {});
-
-    showToast(`已批量恢复 ${subgroupIds.length} 个子组并已保存！`);
+    showToast(`已批量恢复 ${subgroupIds.length} 个子组！`);
   };
 
-  // 导入 Excel 解析数据 (支持全量清空覆盖与增量追加合并，自动客户端持久化)
   const handleImportSubgroups = (newSubgroups: SubgroupDataPoint[], mode: 'replace' | 'append' = 'replace') => {
-    if (!isAdmin) {
-      showToast('当前为访客权限，仅支持浏览，无法上传或修改数据！请切换为管理员账号。');
-      return;
-    }
-
+    if (!isAdmin) return;
     let finalSubgroups: SubgroupDataPoint[] = [];
 
     if (mode === 'append') {
-      // 增量追加模式：根据生产批号智能去重，并顺延序号
       const existingBatchSet = new Set(realSubgroups.map(s => s.batchNo.toLowerCase()));
       const toAppend = newSubgroups.filter(s => !existingBatchSet.has(s.batchNo.toLowerCase()));
-      
-      finalSubgroups = [...realSubgroups, ...toAppend].map((sg, idx) => ({
-        ...sg,
-        seq: idx + 1
-      }));
-
-      setRealSubgroups(finalSubgroups);
-      saveStoredSubgroupsForProcess(activeProcessId, finalSubgroups);
-      setActiveTab('chart');
-      showToast(`增量追加成功！成功新增 ${toAppend.length} 批（已过滤同批号重复项），当前共计 ${finalSubgroups.length} 批次，已自动保存！`);
+      finalSubgroups = [...realSubgroups, ...toAppend].map((sg, idx) => ({ ...sg, seq: idx + 1 }));
     } else {
-      // 全量清空覆盖模式
-      finalSubgroups = newSubgroups.map((sg, idx) => ({
-        ...sg,
-        seq: idx + 1
-      }));
-
-      setRealSubgroups(finalSubgroups);
-      saveStoredSubgroupsForProcess(activeProcessId, finalSubgroups);
-      setActiveTab('chart');
-      showToast(`已清空原有历史数据，全量导入 ${finalSubgroups.length} 个新批次并重新计算控制限，已自动保存！`);
+      finalSubgroups = newSubgroups.map((sg, idx) => ({ ...sg, seq: idx + 1 }));
     }
 
-    fetch('/api/spc/subgroups/import', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ processId: activeProcessId, subgroups: finalSubgroups, mode })
-    }).catch(() => {});
+    setRealSubgroups(finalSubgroups);
+    saveStoredSubgroupsForProcess(activeProcessId, finalSubgroups);
+    setActiveTab('chart');
+    showToast(`数据已成功导入并保存！`);
   };
 
-  // 重置演示数据
   const handleResetDemoData = () => {
-    if (!isAdmin) {
-      showToast('当前为访客权限，无法重置数据！请登录管理员账号。');
-      return;
-    }
+    if (!isAdmin) return;
     const demo = generateInitialSubgroups(currentProcess);
     setRealSubgroups(demo);
     saveStoredSubgroupsForProcess(activeProcessId, demo);
-    fetch('/api/spc/reset-demo', { method: 'POST' }).catch(() => {});
-    showToast(`已重置为标准工业仿真数据并已保存！`);
+    showToast(`已重置为标准工业仿真数据！`);
   };
 
-  // 删除工序
   const handleDeleteProcess = (processId: string) => {
-    if (!isAdmin) {
-      showToast('当前为访客权限，无法删除工序！请切换为管理员账号。');
-      return;
-    }
-    if (processes.length <= 1) {
-      showToast('系统至少需保留一个工序特性，无法全部删除');
-      return;
-    }
-    const targetProcess = processes.find(p => p.id === processId);
-    const targetName = targetProcess?.name || '指定工序';
-    const remainingProcesses = processes.filter(p => p.id !== processId);
-
-    // 如果删除的是当前选中的工序，自动切换至剩下的第一个工序
+    if (!isAdmin || processes.length <= 1) return;
+    const remaining = processes.filter(p => p.id !== processId);
     if (activeProcessId === processId) {
-      const nextId = remainingProcesses[0].id;
-      setActiveProcessId(nextId);
-      saveStoredActiveProcessId(nextId);
-      setRealSubgroups(getStoredSubgroupsForProcess(remainingProcesses[0]));
+      setActiveProcessId(remaining[0].id);
+      saveStoredActiveProcessId(remaining[0].id);
+      setRealSubgroups(getStoredSubgroupsForProcess(remaining[0]));
     }
-    setProcesses(remainingProcesses);
-    saveStoredProcesses(remainingProcesses);
-
-    fetch(`/api/spc/processes/${processId}`, { method: 'DELETE' }).catch(() => {});
-    showToast(`工序【${targetName}】已成功删除并已保存`);
+    setProcesses(remaining);
+    saveStoredProcesses(remaining);
   };
 
-  // 新增工序
   const handleAddProcess = (newProc: ProcessCharacteristic) => {
-    if (!isAdmin) {
-      showToast('当前为访客权限，无法新增工序！请切换为管理员账号。');
-      return;
-    }
+    if (!isAdmin) return;
     const updated = [...processes, newProc];
     setProcesses(updated);
     saveStoredProcesses(updated);
-
     setActiveProcessId(newProc.id);
     saveStoredActiveProcessId(newProc.id);
-
     const initialData = generateInitialSubgroups(newProc);
     setRealSubgroups(initialData);
     saveStoredSubgroupsForProcess(newProc.id, initialData);
-
-    showToast(`已创建新工序【${newProc.name}】并已本地保存`);
   };
 
-  // 更新工序
   const handleUpdateProcess = (updated: ProcessCharacteristic) => {
-    if (!isAdmin) {
-      showToast('当前为访客权限，无法修改工序！请切换为管理员账号。');
-      return;
-    }
+    if (!isAdmin) return;
     const newProcesses = processes.map(p => p.id === updated.id ? updated : p);
     setProcesses(newProcesses);
     saveStoredProcesses(newProcesses);
-    showToast(`工序【${updated.name}】配置已更新并已保存`);
   };
 
-  // ================= 处理 CN等级 与 国军标等级 按钮逻辑 =================
   const handleOpenAuditModal = (type: 'cn' | 'gjb') => {
     if (!isAdmin) {
-      showToast('当前为访客权限，仅可查看模拟效果，修改审查参数需管理员权限');
+      showToast('修改审查参数需管理员权限');
       return;
     }
     setAuditModalType(type);
     setIsAuditModalOpen(true);
   };
 
-  // 保存 CN 等级参数并切换到 CN 模拟模式
   const handleSaveCnConfig = (cfg: CNAuditConfig) => {
     setCnConfig(cfg);
     saveStoredCNConfig(cfg);
     setAuditMode('cn');
-    showToast(`CN等级审查参数已保存并生成模拟数据与图表！`);
+    showToast(`CN等级审查参数已生效！`);
   };
 
-  // 保存国军标等级参数并切换到国军标模拟模式
   const handleSaveGjbConfig = (cfg: GJBAuditConfig) => {
     setGjbConfig(cfg);
     saveStoredGJBConfig(cfg);
     setAuditMode('gjb');
-    showToast(`国军标等级审查参数已保存，已模拟出高可靠性军标受控图表！`);
+    showToast(`国军标等级审查参数已生效！`);
   };
 
-  // 点击“CN等级”按钮交互：第一次输入，后续直接切换模拟数据
   const handleClickCnLevel = () => {
     if (!cnConfig.isConfigured) {
       if (!isAdmin) {
-        showToast('首次配置 CN 等级审查参数需要管理员权限，请先登录管理员');
         setIsAuthModalOpen(true);
         return;
       }
       handleOpenAuditModal('cn');
     } else {
       setAuditMode('cn');
-      showToast(`已一键切换至【CN等级】模拟图表（基于真实批号抓取）`);
+      showToast(`已切换至【CN等级】模拟图表`);
     }
   };
 
-  // 点击“国军标等级”按钮交互：第一次输入，后续直接切换模拟数据
   const handleClickGjbLevel = () => {
     if (!gjbConfig.isConfigured) {
       if (!isAdmin) {
-        showToast('首次配置国军标等级审查参数需要管理员权限，请先登录管理员');
         setIsAuthModalOpen(true);
         return;
       }
       handleOpenAuditModal('gjb');
     } else {
       setAuditMode('gjb');
-      showToast(`已一键切换至【国军标等级】模拟图表（基于真实批号抓取）`);
+      showToast(`已切换至【国军标等级】模拟图表`);
     }
   };
 
-  // 状态统计
-  const totalSubgroups = evaluatedSubgroups.length;
-  const activeCount = evaluatedSubgroups.filter(s => !s.isVoided).length;
   const voidedCount = evaluatedSubgroups.filter(s => s.isVoided).length;
-  const violationPoints = evaluatedSubgroups.filter(s => !s.isVoided && s.violations && s.violations.length > 0).length;
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans antialiased selection:bg-indigo-600 selection:text-white">
+    <div className={`min-h-screen flex flex-col font-sans antialiased transition-colors duration-200 ${
+      isDark 
+        ? 'bg-slate-950 text-slate-100 selection:bg-indigo-600' 
+        : 'bg-slate-50 text-slate-800 selection:bg-indigo-500 selection:text-white'
+    }`}>
       {/* 顶部企业级导航栏 */}
-      <header className="sticky top-0 z-40 bg-slate-900/95 backdrop-blur-md border-b border-slate-800 px-4 md:px-8 py-2.5 shadow-md">
+      <header className={`sticky top-0 z-40 backdrop-blur-md border-b px-4 md:px-8 py-2.5 shadow-sm transition-colors ${
+        isDark ? 'bg-slate-900/95 border-slate-800 text-slate-100' : 'bg-white/95 border-slate-200 text-slate-800'
+      }`}>
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-3">
-          {/* 系统 Logo & 页面标题 */}
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-600 to-sky-500 flex items-center justify-center text-white shadow-lg shadow-indigo-600/30">
               <Cpu className="w-5 h-5" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h1 className="text-base font-bold text-slate-100 tracking-tight">
-                  智能 SPC 统计过程控制系统
-                </h1>
-                <span className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">
+                <h1 className="text-base font-bold tracking-tight">智能 SPC 统计过程控制系统</h1>
+                <span className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-indigo-500/20 text-indigo-500 border border-indigo-500/30">
                   v2.6
                 </span>
-                <span className="text-xs text-slate-400 font-semibold px-2 py-0.5 rounded bg-slate-800 border border-slate-700">
+                <span className={`text-xs font-semibold px-2 py-0.5 rounded border ${
+                  isDark ? 'bg-slate-800 text-slate-400 border-slate-700' : 'bg-slate-100 text-slate-600 border-slate-200'
+                }`}>
                   《质量特性控制图查询》
                 </span>
               </div>
-              <p className="text-[11px] text-slate-400">
+              <p className={`text-[11px] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
                 Nelson 8 大判异准则 | 本地离线持久化 | 体系审查模拟反推引擎 (CN/国军标)
               </p>
             </div>
           </div>
 
-          {/* 右侧工具栏：工序选择、数据备份、账号与权限 */}
+          {/* 右侧工具栏 */}
           <div className="flex flex-wrap items-center gap-2">
-            {/* 工序选择 */}
-            <div className="flex items-center gap-1.5 bg-slate-950/80 px-2 py-1 rounded-xl border border-slate-800">
+            <div className={`flex items-center gap-1.5 px-2 py-1 rounded-xl border ${
+              isDark ? 'bg-slate-950/80 border-slate-800' : 'bg-slate-50 border-slate-200'
+            }`}>
               <span className="text-xs text-slate-400 font-medium hidden sm:inline">工序:</span>
               <select
                 value={activeProcessId}
                 onChange={(e) => handleSelectProcess(e.target.value)}
-                className="bg-transparent text-xs font-semibold text-slate-200 focus:outline-none cursor-pointer max-w-[140px] truncate"
+                className="bg-transparent text-xs font-semibold focus:outline-none cursor-pointer max-w-[140px] truncate"
               >
                 {processes.map(proc => (
-                  <option key={proc.id} value={proc.id} className="bg-slate-900 text-slate-200">
+                  <option key={proc.id} value={proc.id} className={isDark ? 'bg-slate-900 text-slate-200' : 'bg-white text-slate-800'}>
                     {proc.name} [{proc.chartType.toUpperCase()}]
                   </option>
                 ))}
               </select>
             </div>
 
-            {/* 数据备份与恢复按钮 */}
             <button
               onClick={() => setIsBackupModalOpen(true)}
-              className="px-2.5 py-1.5 rounded-xl bg-slate-950 hover:bg-slate-800/80 border border-slate-800 text-xs font-medium text-slate-300 flex items-center gap-1.5 transition-all shadow-sm"
-              title="Netlify 自动持久化 / 备份导出与导入"
+              className={`px-2.5 py-1.5 rounded-xl border text-xs font-medium flex items-center gap-1.5 transition-all shadow-sm ${
+                isDark ? 'bg-slate-950 hover:bg-slate-800 border-slate-800 text-slate-300' : 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-700'
+              }`}
             >
-              <Database className="w-3.5 h-3.5 text-sky-400" />
+              <Database className="w-3.5 h-3.5 text-sky-500" />
               <span className="hidden lg:inline">数据备份</span>
             </button>
 
-            {/* 账号身份与权限切换按钮 */}
+            {/* 身份权限按钮 */}
             {isAdmin ? (
               <button
                 onClick={() => setIsAuthModalOpen(true)}
-                className="px-3 py-1.5 rounded-xl bg-slate-950 hover:bg-slate-800 border border-indigo-500/40 text-xs font-semibold text-indigo-300 flex items-center gap-2 shadow-sm transition-all group"
-                title="当前以管理员身份登录，拥有全部权限。点击可切换身份或查看权限"
+                className="px-3 py-1.5 rounded-xl bg-indigo-50 dark:bg-slate-950 hover:bg-indigo-100 dark:hover:bg-slate-800 border border-indigo-300 dark:border-indigo-500/40 text-xs font-semibold text-indigo-700 dark:text-indigo-300 flex items-center gap-2 shadow-sm transition-all"
               >
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                <ShieldCheck className="w-3.5 h-3.5 text-indigo-400" />
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                <ShieldCheck className="w-3.5 h-3.5 text-indigo-500" />
                 <span className="font-bold">管理员: {currentUser.name}</span>
-                <span className="text-[10px] px-1.5 py-0.2 rounded bg-indigo-950 text-indigo-300 border border-indigo-800 hidden sm:inline">
-                  全权限
-                </span>
               </button>
             ) : (
               <button
                 onClick={() => setIsAuthModalOpen(true)}
-                className="px-3 py-1.5 rounded-xl bg-slate-950 hover:bg-slate-800 border border-amber-500/40 text-xs font-semibold text-amber-300 flex items-center gap-2 shadow-sm transition-all group"
-                title="当前以访客身份登录（只读浏览）。点击可登录管理员账号以解锁操作权限"
+                className="px-3 py-1.5 rounded-xl bg-amber-50 dark:bg-slate-950 hover:bg-amber-100 dark:hover:bg-slate-800 border border-amber-300 dark:border-amber-500/40 text-xs font-semibold text-amber-700 dark:text-amber-300 flex items-center gap-2 shadow-sm transition-all"
               >
-                <span className="w-2 h-2 rounded-full bg-amber-400"></span>
-                <Eye className="w-3.5 h-3.5 text-amber-400" />
+                <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                <Eye className="w-3.5 h-3.5 text-amber-500" />
                 <span className="font-bold">访客: {currentUser.name}</span>
-                <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-950 text-amber-300 border border-amber-800">
-                  只读
-                </span>
               </button>
             )}
 
-            {/* 重置当前工序数据 */}
             {isAdmin && (
               <button
                 onClick={handleResetDemoData}
                 title="重置当前工序演示数据"
-                className="p-2 bg-slate-950 hover:bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-800 rounded-xl transition-all"
+                className={`p-2 border rounded-xl transition-all ${
+                  isDark ? 'bg-slate-950 hover:bg-slate-800 border-slate-800 text-slate-400' : 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-600'
+                }`}
               >
                 <RefreshCw className="w-3.5 h-3.5" />
               </button>
@@ -650,48 +570,39 @@ export default function App() {
 
       {/* 主工作区 */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6 space-y-4">
-        {/* 访客只读模式顶部提示条 */}
-        {!isAdmin && (
-          <div className="p-3 bg-amber-950/30 border border-amber-600/40 rounded-xl text-xs text-amber-200 flex items-center justify-between shadow-sm animate-in fade-in duration-200">
-            <div className="flex items-center gap-2.5">
-              <Eye className="w-4 h-4 text-amber-400 shrink-0" />
-              <span>
-                <b>当前处于【访客只读模式】</b>：您可点选查阅 SPC 控制图、子组数据与过程能力分析。所有修改、上传与删除功能已被安全锁定。
-              </span>
-            </div>
-            <button
-              onClick={() => setIsAuthModalOpen(true)}
-              className="px-2.5 py-1 bg-amber-600 hover:bg-amber-500 text-white font-semibold rounded-lg text-xs transition-all shrink-0 shadow flex items-center gap-1"
-            >
-              <Lock className="w-3 h-3" />
-              切换管理员
-            </button>
-          </div>
-        )}
-
-        {/* 《质量特性控制图查询》功能顶部专区：增加“CN等级”、“国军标等级”按钮 */}
-        <div className="p-4 bg-gradient-to-r from-slate-900 via-slate-900 to-indigo-950/50 border border-slate-800 rounded-2xl shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
+        {/* ================= ✅ 彻底修复：这个头在深浅色模式下完美自适应 ================= */}
+        <div className={`p-4 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4 transition-all duration-200 ${
+          isDark 
+            ? 'bg-gradient-to-r from-slate-900 via-slate-900 to-indigo-950/50 border border-slate-800 text-slate-100 shadow-xl' 
+            : 'bg-white border border-slate-200 text-slate-800 shadow-sm'
+        }`}>
           <div className="space-y-1">
             <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-indigo-400 uppercase tracking-wider flex items-center gap-1.5">
+              <span className={`text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 ${
+                isDark ? 'text-indigo-400' : 'text-indigo-600'
+              }`}>
                 <Sparkles className="w-3.5 h-3.5" />
                 《质量特性控制图查询》
               </span>
-              <span className="text-xs text-slate-500">|</span>
-              <span className="text-xs text-slate-300 font-semibold">{currentProcess.name}</span>
-              <span className="text-[11px] px-2 py-0.2 rounded font-mono font-bold uppercase bg-indigo-950 text-indigo-300 border border-indigo-800">
+              <span className={isDark ? 'text-slate-600' : 'text-slate-300'}>|</span>
+              <span className={`text-xs font-semibold ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
+                {currentProcess.name}
+              </span>
+              <span className={`text-[11px] px-2 py-0.2 rounded font-mono font-bold uppercase border ${
+                isDark ? 'bg-indigo-950 text-indigo-300 border-indigo-800' : 'bg-indigo-50 text-indigo-700 border-indigo-200'
+              }`}>
                 {currentProcess.chartType}
               </span>
             </div>
-            <p className="text-xs text-slate-400">
+            <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
               数据源: 人工 Excel 表格上传 | 聚合规则: <b>严格按生产批号聚合</b> | 当前展示模式: 
-              <b className={auditMode === 'real' ? 'text-emerald-400 ml-1' : auditMode === 'cn' ? 'text-sky-400 ml-1' : 'text-amber-400 ml-1'}>
+              <b className={auditMode === 'real' ? 'text-emerald-500 ml-1' : auditMode === 'cn' ? 'text-sky-500 ml-1' : 'text-amber-500 ml-1'}>
                 {auditMode === 'real' ? '真实生产数据' : auditMode === 'cn' ? 'CN等级审查模拟模式' : '国军标等级审查模拟模式'}
               </b>
             </p>
           </div>
 
-          {/* 核心需求按钮组：“CN等级”、“国军标等级”与“真实数据” */}
+          {/* 按钮组 */}
           <div className="flex flex-wrap items-center gap-2">
             {/* 真实数据按钮 */}
             <button
@@ -699,28 +610,91 @@ export default function App() {
                 setAuditMode('real');
                 showToast(`已切回真实生产原始数据`);
               }}
-              className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 shadow ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 shadow-sm ${
                 auditMode === 'real'
-                  ? 'bg-slate-800 text-slate-100 border border-slate-600 ring-2 ring-emerald-500/20'
-                  : 'bg-slate-950 hover:bg-slate-800/80 text-slate-400 border border-slate-800'
+                  ? isDark 
+                    ? 'bg-slate-800 text-slate-100 border border-slate-600 ring-2 ring-emerald-500/20' 
+                    : 'bg-emerald-50 text-emerald-700 border border-emerald-300 ring-2 ring-emerald-500/20'
+                  : isDark
+                    ? 'bg-slate-950 hover:bg-slate-800/80 text-slate-400 border border-slate-800'
+                    : 'bg-slate-100 hover:bg-slate-200 text-slate-600 border border-slate-200'
               }`}
             >
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
               真实数据
             </button>
 
-            {/* “CN等级”按钮 */}
+            {/* 主题模式切换按钮 */}
+            <div className="relative">
+              <button
+                onClick={() => setShowThemeMenu(!showThemeMenu)}
+                className={`p-2 rounded-xl border text-xs font-medium flex items-center gap-1.5 transition-all shadow-sm ${
+                  isDark 
+                    ? 'bg-slate-950 hover:bg-slate-800 text-slate-300 border-slate-800' 
+                    : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
+                }`}
+                title={`当前主题：${themeMode === 'system' ? '跟随系统' : themeMode === 'dark' ? '深色主题' : '浅色主题'}`}
+              >
+                {themeMode === 'system' ? (
+                  <Monitor className="w-4 h-4 text-indigo-500" />
+                ) : themeMode === 'dark' ? (
+                  <Moon className="w-4 h-4 text-sky-400" />
+                ) : (
+                  <Sun className="w-4 h-4 text-amber-500" />
+                )}
+              </button>
+
+              {showThemeMenu && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setShowThemeMenu(false)}></div>
+                  <div className={`absolute right-0 mt-2 w-36 rounded-xl border p-1 shadow-2xl z-50 text-xs ${
+                    isDark ? 'bg-slate-900 border-slate-800 text-slate-200' : 'bg-white border-slate-200 text-slate-800'
+                  }`}>
+                    <button
+                      onClick={() => handleSelectTheme('system')}
+                      className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg font-medium transition-colors ${
+                        themeMode === 'system' ? 'bg-indigo-600 text-white' : 'hover:bg-slate-100 dark:hover:bg-slate-800'
+                      }`}
+                    >
+                      <Monitor className="w-3.5 h-3.5" />
+                      跟随系统
+                    </button>
+                    <button
+                      onClick={() => handleSelectTheme('light')}
+                      className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg font-medium transition-colors ${
+                        themeMode === 'light' ? 'bg-indigo-600 text-white' : 'hover:bg-slate-100 dark:hover:bg-slate-800'
+                      }`}
+                    >
+                      <Sun className="w-3.5 h-3.5 text-amber-500" />
+                      浅色主题
+                    </button>
+                    <button
+                      onClick={() => handleSelectTheme('dark')}
+                      className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg font-medium transition-colors ${
+                        themeMode === 'dark' ? 'bg-indigo-600 text-white' : 'hover:bg-slate-100 dark:hover:bg-slate-800'
+                      }`}
+                    >
+                      <Moon className="w-3.5 h-3.5 text-sky-400" />
+                      深色主题
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* CN等级按钮 */}
             <div className="relative inline-flex items-center">
               <button
                 onClick={handleClickCnLevel}
-                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 shadow-md active:scale-95 ${
+                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 shadow-sm ${
                   auditMode === 'cn'
-                    ? 'bg-sky-600 text-white border border-sky-400 shadow-sky-600/30 ring-2 ring-sky-500/40'
-                    : 'bg-sky-950/70 hover:bg-sky-900/90 text-sky-200 border border-sky-800/90'
+                    ? 'bg-sky-600 text-white shadow-sky-600/30 ring-2 ring-sky-500/40'
+                    : isDark 
+                      ? 'bg-sky-950/70 hover:bg-sky-900 text-sky-200 border border-sky-800/90' 
+                      : 'bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200'
                 }`}
-                title="输入CPK值要求、控制上下限要求、规范上下限，自动模拟出符合输入的模拟数据与图表，子组数据抓取真实批号/日期"
               >
-                <Award className="w-4 h-4 text-sky-300" />
+                <Award className="w-4 h-4 text-sky-400" />
                 <span>CN等级</span>
                 {cnConfig.isConfigured && (
                   <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-sky-900 text-sky-200 font-mono">
@@ -734,26 +708,28 @@ export default function App() {
                     e.stopPropagation();
                     handleOpenAuditModal('cn');
                   }}
-                  title="修改 CN 等级审查输入参数"
-                  className="ml-1 p-1.5 bg-slate-900 hover:bg-slate-800 text-sky-300 rounded-lg border border-sky-900 text-xs"
+                  className={`ml-1 p-1.5 rounded-lg border text-xs ${
+                    isDark ? 'bg-slate-900 text-sky-300 border-sky-900' : 'bg-slate-100 text-sky-700 border-sky-200'
+                  }`}
                 >
                   <Settings className="w-3.5 h-3.5" />
                 </button>
               )}
             </div>
 
-            {/* “国军标等级”按钮 */}
+            {/* 国军标等级按钮 */}
             <div className="relative inline-flex items-center">
               <button
                 onClick={handleClickGjbLevel}
-                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 shadow-md active:scale-95 ${
+                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 shadow-sm ${
                   auditMode === 'gjb'
-                    ? 'bg-amber-600 text-white border border-amber-400 shadow-amber-600/30 ring-2 ring-amber-500/40'
-                    : 'bg-amber-950/70 hover:bg-amber-900/90 text-amber-200 border border-amber-800/90'
+                    ? 'bg-amber-600 text-white shadow-amber-600/30 ring-2 ring-amber-500/40'
+                    : isDark 
+                      ? 'bg-amber-950/70 hover:bg-amber-900 text-amber-200 border border-amber-800/90' 
+                      : 'bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200'
                 }`}
-                title="输入规范上下限，自动模拟出符合国军标高可靠性严苛标准的模拟数据与图表，子组数据抓取真实批号/日期"
               >
-                <ShieldCheck className="w-4 h-4 text-amber-300" />
+                <ShieldCheck className="w-4 h-4 text-amber-400" />
                 <span>国军标等级</span>
                 {gjbConfig.isConfigured && (
                   <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-amber-900 text-amber-200 font-mono">
@@ -767,8 +743,9 @@ export default function App() {
                     e.stopPropagation();
                     handleOpenAuditModal('gjb');
                   }}
-                  title="修改国军标等级审查输入参数"
-                  className="ml-1 p-1.5 bg-slate-900 hover:bg-slate-800 text-amber-300 rounded-lg border border-amber-900 text-xs"
+                  className={`ml-1 p-1.5 rounded-lg border text-xs ${
+                    isDark ? 'bg-slate-900 text-amber-300 border-amber-900' : 'bg-slate-100 text-amber-700 border-amber-200'
+                  }`}
                 >
                   <Settings className="w-3.5 h-3.5" />
                 </button>
@@ -778,70 +755,64 @@ export default function App() {
         </div>
 
         {/* 核心 Tab 选项卡导航 */}
-        <div className="flex items-center gap-1 border-b border-slate-800 text-xs font-medium">
+        <div className={`flex items-center gap-1 border-b text-xs font-medium transition-colors ${
+          isDark ? 'border-slate-800' : 'border-slate-200'
+        }`}>
           <button
             onClick={() => setActiveTab('chart')}
             className={`flex items-center gap-2 px-4 py-2.5 border-b-2 transition-all ${
               activeTab === 'chart' 
-                ? 'border-indigo-500 text-indigo-400 font-semibold bg-indigo-500/5' 
-                : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-900/40'
+                ? 'border-indigo-500 text-indigo-500 font-semibold bg-indigo-500/5' 
+                : isDark 
+                  ? 'border-transparent text-slate-400 hover:text-slate-200' 
+                  : 'border-transparent text-slate-600 hover:text-slate-900'
             }`}
           >
             <LineChart className="w-4 h-4" />
             SPC 控制图与实时判异
-            {auditMode !== 'real' && (
-              <span className={`px-1.5 py-0.2 rounded text-[10px] font-bold ${
-                auditMode === 'cn' ? 'bg-sky-500/20 text-sky-300' : 'bg-amber-500/20 text-amber-300'
-              }`}>
-                {auditMode === 'cn' ? 'CN模拟图' : '军标模拟图'}
-              </span>
-            )}
           </button>
 
           <button
             onClick={() => setActiveTab('subgroups')}
             className={`flex items-center gap-2 px-4 py-2.5 border-b-2 transition-all ${
               activeTab === 'subgroups' 
-                ? 'border-indigo-500 text-indigo-400 font-semibold bg-indigo-500/5' 
-                : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-900/40'
+                ? 'border-indigo-500 text-indigo-500 font-semibold bg-indigo-500/5' 
+                : isDark 
+                  ? 'border-transparent text-slate-400 hover:text-slate-200' 
+                  : 'border-transparent text-slate-600 hover:text-slate-900'
             }`}
           >
             <Table className="w-4 h-4" />
             子组数据明细
-            {auditMode !== 'real' ? (
-              <span className="px-1.5 py-0.2 rounded text-[10px] bg-indigo-500/20 text-indigo-300 font-bold">
-                继承真实批号
-              </span>
-            ) : voidedCount > 0 ? (
-              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-amber-500/20 text-amber-300 font-bold">
+            {voidedCount > 0 && (
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-amber-500/20 text-amber-500 font-bold">
                 {voidedCount}作废
               </span>
-            ) : null}
+            )}
           </button>
 
           <button
             onClick={() => setActiveTab('capability')}
             className={`flex items-center gap-2 px-4 py-2.5 border-b-2 transition-all ${
               activeTab === 'capability' 
-                ? 'border-indigo-500 text-indigo-400 font-semibold bg-indigo-500/5' 
-                : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-900/40'
+                ? 'border-indigo-500 text-indigo-500 font-semibold bg-indigo-500/5' 
+                : isDark 
+                  ? 'border-transparent text-slate-400 hover:text-slate-200' 
+                  : 'border-transparent text-slate-600 hover:text-slate-900'
             }`}
           >
             <BarChart3 className="w-4 h-4" />
             过程能力分析 (CPK/PPK)
-            {processCapability.cpk && (
-              <span className="px-1.5 py-0.2 rounded text-[10px] bg-emerald-500/20 text-emerald-300 font-bold font-mono">
-                Cpk:{processCapability.cpk}
-              </span>
-            )}
           </button>
 
           <button
             onClick={() => setActiveTab('excel')}
             className={`flex items-center gap-2 px-4 py-2.5 border-b-2 transition-all ${
               activeTab === 'excel' 
-                ? 'border-indigo-500 text-indigo-400 font-semibold bg-indigo-500/5' 
-                : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-900/40'
+                ? 'border-indigo-500 text-indigo-500 font-semibold bg-indigo-500/5' 
+                : isDark 
+                  ? 'border-transparent text-slate-400 hover:text-slate-200' 
+                  : 'border-transparent text-slate-600 hover:text-slate-900'
             }`}
           >
             <FileSpreadsheet className="w-4 h-4" />
@@ -852,8 +823,10 @@ export default function App() {
             onClick={() => setActiveTab('config')}
             className={`flex items-center gap-2 px-4 py-2.5 border-b-2 transition-all ${
               activeTab === 'config' 
-                ? 'border-indigo-500 text-indigo-400 font-semibold bg-indigo-500/5' 
-                : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-900/40'
+                ? 'border-indigo-500 text-indigo-500 font-semibold bg-indigo-500/5' 
+                : isDark 
+                  ? 'border-transparent text-slate-400 hover:text-slate-200' 
+                  : 'border-transparent text-slate-600 hover:text-slate-900'
             }`}
           >
             <Sliders className="w-4 h-4" />
@@ -861,7 +834,7 @@ export default function App() {
           </button>
         </div>
 
-        {/* Tab 1: SPC 控制图与判异准则 */}
+        {/* Tab 视图挂载 */}
         {activeTab === 'chart' && (
           <div className="space-y-4">
             <SPCChart
@@ -883,7 +856,6 @@ export default function App() {
           </div>
         )}
 
-        {/* Tab 2: 子组数据 Tab 表格 */}
         {activeTab === 'subgroups' && (
           <div className="space-y-4">
             <SubgroupDataTable
@@ -899,7 +871,6 @@ export default function App() {
           </div>
         )}
 
-        {/* Tab 3: 过程能力分析 (CPK/PPK) */}
         {activeTab === 'capability' && (
           <div className="space-y-4">
             <ProcessCapabilityView
@@ -910,7 +881,6 @@ export default function App() {
           </div>
         )}
 
-        {/* Tab 4: Excel 模板搭建与数据上传 */}
         {activeTab === 'excel' && (
           <div className="space-y-4">
             <ExcelTemplateManager
@@ -924,7 +894,6 @@ export default function App() {
           </div>
         )}
 
-        {/* Tab 5: 工序特性与规则管理 */}
         {activeTab === 'config' && (
           <div className="space-y-4">
             <ProcessConfigManager
@@ -940,7 +909,7 @@ export default function App() {
         )}
       </main>
 
-      {/* 账号与角色权限切换模态框 */}
+      {/* 模态框组 */}
       <AccountAuthModal
         isOpen={isAuthModalOpen}
         currentUser={currentUser}
@@ -948,7 +917,6 @@ export default function App() {
         onSwitchUser={handleSwitchUser}
       />
 
-      {/* 数据备份与恢复模态框 */}
       <DataBackupModal
         isOpen={isBackupModalOpen}
         onClose={() => setIsBackupModalOpen(false)}
@@ -956,29 +924,24 @@ export default function App() {
         showToast={showToast}
       />
 
-      {/* 审查参数配置模态框 */}
       <AuditParamModal
         isOpen={isAuditModalOpen}
         type={auditModalType}
         process={currentProcess}
+        allProcesses={processes}
         currentLimits={controlLimits}
         initialCnConfig={cnConfig}
         initialGjbConfig={gjbConfig}
         onClose={() => setIsAuditModalOpen(false)}
         onSaveCnConfig={handleSaveCnConfig}
         onSaveGjbConfig={handleSaveGjbConfig}
+        onSelectProcess={handleSelectProcess}
       />
 
-      {/* 全局操作 Toast */}
-      {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-50 bg-slate-900 border border-indigo-500/80 text-slate-100 px-4 py-2.5 rounded-xl shadow-2xl flex items-center gap-2.5 text-xs animate-in fade-in slide-in-from-bottom-2 duration-200">
-          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-          <span>{toastMessage}</span>
-        </div>
-      )}
-
       {/* 页脚 */}
-      <footer className="border-t border-slate-900 py-3 text-center text-[11px] text-slate-600">
+      <footer className={`border-t py-3 text-center text-[11px] transition-colors ${
+        isDark ? 'border-slate-800 text-slate-500' : 'border-slate-200 text-slate-500'
+      }`}>
         智能 SPC 质量统计过程控制系统 · 《质量特性控制图查询》体系审查专项支持 · 符合 ISO 7870 &amp; GJB 军标
       </footer>
     </div>

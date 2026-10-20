@@ -1,1 +1,110 @@
 @import "tailwindcss";
+
+/* 激活 Tailwind v4 对 .dark 类的感知，彻底解决控制图切深色不变黑的问题 */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ================= 浅色模式 (html.light) 颜色映射 ================= */
+html.light, 
+html.light body {
+  background-color: #f8fafc !important;
+  color: #0f172a !important;
+}
+
+/* 浅色模式：全站卡片统一白底与灰边框 */
+html.light .bg-slate-900,
+html.light .bg-slate-900\/90,
+html.light .bg-slate-950 {
+  background-color: #ffffff !important;
+  background-image: none !important;
+  border-color: #e2e8f0 !important;
+  color: #0f172a !important;
+}
+
+/* 浅色模式：次级背景转浅灰 */
+html.light .bg-slate-800,
+html.light .bg-slate-800\/40,
+html.light .bg-slate-950\/60,
+html.light .bg-slate-950\/80 {
+  background-color: #f1f5f9 !important;
+  border-color: #cbd5e1 !important;
+  color: #0f172a !important;
+}
+
+/* 浅色模式：文字深浅校正 */
+html.light .text-slate-100,
+html.light .text-slate-200,
+html.light .text-slate-300 {
+  color: #0f172a !important;
+}
+html.light .text-slate-400,
+html.light .text-slate-500 {
+  color: #475569 !important;
+}
+
+/* 浅色模式：边框统一 */
+html.light .border-slate-800,
+html.light .border-slate-700 {
+  border-color: #e2e8f0 !important;
+}
+
+/* 1. 彻底解决区域一：严格展示规范灰色长横幅 (消除暗灰底，文字清晰可见) */
+html.light div:has(> [class*="bg-indigo-500"]),
+html.light .p-3.bg-slate-900,
+html.light .bg-slate-900\/90,
+html.light [class*="bg-slate-900"],
+html.light [class*="bg-slate-800"] {
+  background-color: #f8fafc !important; /* 洁净浅灰白底 */
+  color: #0f172a !important;            /* 纯正深色文字 */
+  border-color: #cbd5e1 !important;
+}
+
+/* 强制横幅内所有文字与说明为高对比深黑灰 */
+html.light [class*="bg-slate-900"] *,
+html.light [class*="bg-slate-800"] * {
+  color: #1e293b !important;
+}
+
+/* 2. 彻底解决区域二：Excel 模板实时预览彩色表头与单元格 (Airtable 级清爽高对比) */
+
+/* 【生产批号 (聚合子组)】列：浅蓝底 + 鲜明深蓝字 */
+html.light th[class*="indigo"],
+html.light td[class*="indigo"],
+html.light [class*="bg-indigo-950"],
+html.light [class*="bg-purple-950"] {
+  background-color: #eff6ff !important; /* 柔和浅天蓝底 */
+  color: #1d4ed8 !important;            /* 鲜明高对比深蓝字 */
+  border-color: #bfdbfe !important;
+  font-weight: 600 !important;
+}
+
+/* 【抽样总数 (n)】列：浅黄底 + 鲜明赭黄深字 */
+html.light th[class*="amber"],
+html.light td[class*="amber"],
+html.light [class*="bg-amber-950"],
+html.light [class*="bg-yellow-950"] {
+  background-color: #fefce8 !important; /* 柔和浅奶黄底 */
+  color: #a16207 !important;            /* 鲜明深棕黄字 */
+  border-color: #fef08a !important;
+  font-weight: 600 !important;
+}
+
+/* 【不合格品数 (d)】列：浅粉底 + 鲜明深红字 */
+html.light th[class*="rose"],
+html.light td[class*="rose"],
+html.light [class*="bg-rose-950"],
+html.light [class*="bg-red-950"] {
+  background-color: #fef2f2 !important; /* 柔和浅粉底 */
+  color: #b91c1c !important;            /* 鲜明警示深红字 */
+  border-color: #fecaca !important;
+  font-weight: 600 !important;
+}
+
+/* 【测量值 x1~xn】列：浅绿底 + 鲜明深绿字 */
+html.light th[class*="emerald"],
+html.light td[class*="emerald"],
+html.light [class*="bg-emerald-950"] {
+  background-color: #f0fdf4 !important; /* 柔和浅绿底 */
+  color: #15803d !important;            /* 鲜明深绿字 */
+  border-color: #bbf7d0 !important;
+  font-weight: 600 !important;
+}
