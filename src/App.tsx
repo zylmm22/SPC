@@ -210,9 +210,24 @@ export default function App() {
 
   // 2. 核心计算：Nelson 8 大判异准则实时评估 (根据用户勾选的 enabledRules)
   const evaluatedSubgroups: SubgroupDataPoint[] = useMemo(() => {
-    const mainEvaluated = evaluateNelsonRules(activeSubgroups, controlLimits, enabledRules, 'main');
+    // 均值主图判异
+    const mainEvaluated = evaluateNelsonRules(
+      activeSubgroups, 
+      controlLimits, 
+      enabledRules, 
+      'main', 
+      currentProcess.chartType
+    );
+
+    // 副图判异 (S图 / R图 / MR图)
     if (['xbar-r', 'xbar-s', 'i-mr'].includes(currentProcess.chartType)) {
-      return evaluateNelsonRules(mainEvaluated, controlLimits, enabledRules, 'sub');
+      return evaluateNelsonRules(
+        mainEvaluated, 
+        controlLimits, 
+        enabledRules, 
+        'sub', 
+        currentProcess.chartType // ✅ 必须传入当前图表类型，让引擎精准提取 stdDev
+      );
     }
     return mainEvaluated;
   }, [activeSubgroups, controlLimits, enabledRules, currentProcess.chartType]);

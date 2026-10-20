@@ -3,7 +3,6 @@ import {
   SubgroupDataPoint, 
   ControlLimits, 
   ProcessCharacteristic, 
-  SPCChartType,
   AuditLevelMode,
   CNAuditConfig,
   GJBAuditConfig
@@ -13,9 +12,7 @@ import {
   AlertTriangle, 
   CheckCircle2, 
   EyeOff, 
-  Info, 
   Sliders, 
-  Maximize2, 
   RotateCcw,
   Sparkles,
   Activity,
@@ -23,7 +20,6 @@ import {
   ShieldCheck,
   Settings,
   Lock,
-  Eye,
   Calendar
 } from 'lucide-react';
 
@@ -66,10 +62,43 @@ export const SPCChart: React.FC<SPCChartProps> = ({
   const [showSpecLimits, setShowSpecLimits] = useState<boolean>(true);
   const [voidReasonInput, setVoidReasonInput] = useState<string>('');
   
-  // X 轴显示模式: 批次顺序(1,2,3) | 生产批次号 | 采集日期时间 (支持下拉选择)
+  // X 轴显示模式: 批次顺序(1,2,3) | 生产批次号 | 采集日期时间
   const [xAxisMode, setXAxisMode] = useState<'seq' | 'batchNo' | 'sampleTime'>('seq');
 
   const isDualChart = ['xbar-r', 'xbar-s', 'i-mr'].includes(process.chartType);
+
+  // 1. 规格限智能校验与防呆处理 (彻底修复 LSL: 0.7 倒挂在 UCL 上方的 Bug)
+  const normalizedSpecs = useMemo(() => {
+    let rawUsl = process.usl;
+    let rawLsl = process.lsl;
+
+    if (rawUsl === undefined && rawLsl === undefined) {
+      return { usl: undefined, lsl: undefined, isCorrected: false };
+    }
+
+    let isCorrected = false;
+
+    // 容错 1: USL 与 LSL 大小写反了
+    if (rawUsl !== undefined && rawLsl !== undefined && rawLsl > rawUsl) {
+      const temp = rawUsl;
+      rawUsl = rawLsl;
+      rawLsl = temp;
+      isCorrected = true;
+    }
+
+    // 容错 2: 中心线在 0 附近 (偏差特征)，但 LSL 填成了正数 (例如公差 ±0.7 漏填负号录成 +0.7)
+    // 判断条件：LSL > CL 且 数据点大部分处于 LSL 之下
+    if (rawLsl !== undefined && rawLsl > limits.cl) {
+      const pointsBelowLsl = subgroups.filter(s => s.mean < rawLsl!).length;
+      if (pointsBelowLsl / (subgroups.length || 1) > 0.7) {
+        // 判定为缺失负号，自动纠偏为负数
+        rawLsl = -Math.abs(rawLsl);
+        isCorrected = true;
+      }
+    }
+
+    return { usl: rawUsl, lsl: rawLsl, isCorrected };
+  }, [process.usl, process.lsl, limits.cl, subgroups]);
 
   // 统计异常情况
   const violationStats = useMemo(() => {
@@ -96,18 +125,18 @@ export const SPCChart: React.FC<SPCChartProps> = ({
     };
   }, [subgroups]);
 
-  // SVG 画布尺寸配置 (为 X 轴刻度及标注预留清晰下边距)
+  // SVG 画布尺寸配置 (右边距增大到 105，防止文字超出)
   const svgWidth = 980;
   const mainHeight = isDualChart ? 285 : 365;
   const subHeight = isDualChart ? 190 : 0;
-  const padding = { top: 25, right: 90, bottom: 38, left: 65 };
+  const padding = { top: 25, right: 105, bottom: 38, left: 65 };
 
   // 绘图区域有效尺寸
   const plotWidth = svgWidth - padding.left - padding.right;
   const plotMainHeight = mainHeight - padding.top - padding.bottom;
   const plotSubHeight = subHeight - padding.top - padding.bottom;
 
-  // 提取副图对应统计量 (根据图表类型精确区分：Xbar-S 图取 S 标差，Xbar-R 图取 R 极差，I-MR 图取 MR 移动极差)
+  // 提取副图对应统计量
   const getSubPointVal = (sg: SubgroupDataPoint): number => {
     if (process.chartType === 'xbar-s') {
       return sg.stdDev !== undefined ? sg.stdDev : (sg.range ?? 0);
@@ -118,19 +147,14 @@ export const SPCChart: React.FC<SPCChartProps> = ({
     return sg.range !== undefined ? sg.range : (sg.stdDev ?? sg.movingRange ?? 0);
   };
 
-  // X 轴标签智能格式化 (支持 批次顺序 1,2,3 / 生产批次号 / 采集日期时间)
+  // X 轴标签格式化
   const formatXAxisLabel = (sg: SubgroupDataPoint, mode: 'seq' | 'batchNo' | 'sampleTime') => {
-    if (mode === 'seq') {
-      return `${sg.seq}`;
-    }
+    if (mode === 'seq') return `${sg.seq}`;
     if (mode === 'batchNo') {
       if (!sg.batchNo) return `#${sg.seq}`;
-      // 精简规范批号展示，去除生硬前缀负号避免视觉误读
       if (sg.batchNo.startsWith('LOT-')) {
         const parts = sg.batchNo.split('-');
-        if (parts.length >= 3) {
-          return `LOT-${parts[parts.length - 1]}`;
-        }
+        if (parts.length >= 3) return `LOT-${parts[parts.length - 1]}`;
       }
       return sg.batchNo.length > 10 ? sg.batchNo.slice(-7) : sg.batchNo;
     }
@@ -147,26 +171,21 @@ export const SPCChart: React.FC<SPCChartProps> = ({
     return `${sg.seq}`;
   };
 
-  // 根据当前 X 轴显示模式自适应调整刻度步长，保证美观不遮挡重叠
   const tickInterval = useMemo(() => {
     if (subgroups.length <= 10) return 1;
-    if (xAxisMode === 'sampleTime') {
-      return Math.max(1, Math.ceil(subgroups.length / 8));
-    }
-    if (xAxisMode === 'batchNo') {
-      return Math.max(1, Math.ceil(subgroups.length / 10));
-    }
+    if (xAxisMode === 'sampleTime') return Math.max(1, Math.ceil(subgroups.length / 8));
+    if (xAxisMode === 'batchNo') return Math.max(1, Math.ceil(subgroups.length / 10));
     return Math.max(1, Math.ceil(subgroups.length / 16));
   }, [subgroups.length, xAxisMode]);
 
-  // 主图 Y 轴范围计算
+  // 主图 Y 轴范围计算 (包含校正后的规格限)
   const mainYRange = useMemo(() => {
     const mainValues = subgroups.map(s => s.mean);
     const ucl = limits.ucl;
     const lcl = limits.lcl;
     const cl = limits.cl;
-    const usl = showSpecLimits && process.usl !== undefined ? process.usl : ucl;
-    const lsl = showSpecLimits && process.lsl !== undefined ? process.lsl : lcl;
+    const usl = showSpecLimits && normalizedSpecs.usl !== undefined ? normalizedSpecs.usl : ucl;
+    const lsl = showSpecLimits && normalizedSpecs.lsl !== undefined ? normalizedSpecs.lsl : lcl;
 
     const variableY = (limits.hasVariableLimits && limits.variableLimits)
       ? limits.variableLimits.flatMap(v => [v.ucl, v.lcl, v.cl])
@@ -182,9 +201,9 @@ export const SPCChart: React.FC<SPCChartProps> = ({
       min: minVal - margin,
       max: maxVal + margin
     };
-  }, [subgroups, limits, process, showSpecLimits]);
+  }, [subgroups, limits, normalizedSpecs, showSpecLimits]);
 
-  // 副图 Y 轴范围计算 (精确依据 S 或 R 或 MR)
+  // 副图 Y 轴范围计算
   const subYRange = useMemo(() => {
     if (!isDualChart) return { min: 0, max: 1 };
     const subValues = subgroups.map(s => getSubPointVal(s));
@@ -198,42 +217,11 @@ export const SPCChart: React.FC<SPCChartProps> = ({
     const span = maxVal - minVal || 1;
     const margin = span * 0.15;
 
-    // 为保证副图 LCL (即使等于 0) 及底部数据点拥有清晰视野与安全下边距（避免紧贴或被底边框遮蔽），
-    // 采用与主图一致的对称边距算法
     return {
       min: minVal - margin,
       max: maxVal + margin
     };
   }, [subgroups, limits, isDualChart, process.chartType]);
-
-  // 控制限小数精度智能计算与格式化 (解决 LCL 为 0 时显示不清晰、格式不对齐的问题)
-  const subDecimals = useMemo(() => {
-    if (limits.subUcl !== undefined && String(limits.subUcl).includes('.')) {
-      return String(limits.subUcl).split('.')[1].length;
-    }
-    if (limits.subCl !== undefined && String(limits.subCl).includes('.')) {
-      return String(limits.subCl).split('.')[1].length;
-    }
-    return 4;
-  }, [limits.subUcl, limits.subCl]);
-
-  const mainDecimals = useMemo(() => {
-    if (limits.ucl !== undefined && String(limits.ucl).includes('.')) {
-      return String(limits.ucl).split('.')[1].length;
-    }
-    if (limits.cl !== undefined && String(limits.cl).includes('.')) {
-      return String(limits.cl).split('.')[1].length;
-    }
-    return 4;
-  }, [limits.ucl, limits.cl]);
-
-  const formatLimitValue = (val: number | undefined, decimals: number) => {
-    if (val === undefined || isNaN(val)) return '-';
-    if (val === 0) {
-      return (0).toFixed(decimals);
-    }
-    return String(val);
-  };
 
   // 坐标转换函数
   const getX = (index: number) => {
@@ -255,31 +243,137 @@ export const SPCChart: React.FC<SPCChartProps> = ({
     return padding.top + plotSubHeight - ratio * plotSubHeight;
   };
 
-  // 主图标签与名称
+  // 小数格式化
+  const mainDecimals = useMemo(() => {
+    if (limits.ucl !== undefined && String(limits.ucl).includes('.')) return String(limits.ucl).split('.')[1].length;
+    if (limits.cl !== undefined && String(limits.cl).includes('.')) return String(limits.cl).split('.')[1].length;
+    return 4;
+  }, [limits.ucl, limits.cl]);
+
+  const subDecimals = useMemo(() => {
+    if (limits.subUcl !== undefined && String(limits.subUcl).includes('.')) return String(limits.subUcl).split('.')[1].length;
+    return 4;
+  }, [limits.subUcl]);
+
+  const formatLimitValue = (val: number | undefined, decimals: number) => {
+    if (val === undefined || isNaN(val)) return '-';
+    return Number(val.toFixed(decimals)).toString();
+  };
+
+  // 2. 右侧文本标签防重叠避让算法 (Anti-Collision Engine)
+  const adjustLabelPositions = (labels: Array<{ id: string; rawY: number; text: string; color: string; fontSize: number; isBold?: boolean }>) => {
+    if (labels.length === 0) return [];
+    // 按原始 Y 从小到大排序 (即从上到下)
+    const sorted = [...labels].sort((a, b) => a.rawY - b.rawY);
+    const minSpacing = 14; // 两行文字之间的最小安全垂直像素间距
+
+    // 第一次自上而下推挤
+    for (let i = 1; i < sorted.length; i++) {
+      if (sorted[i].rawY - sorted[i - 1].rawY < minSpacing) {
+        sorted[i].rawY = sorted[i - 1].rawY + minSpacing;
+      }
+    }
+
+    return sorted;
+  };
+
+  // 构造主图右侧基准线与标签数据
+  const mainChartLabels = useMemo(() => {
+    const list: Array<{ id: string; rawY: number; text: string; color: string; fontSize: number; isBold?: boolean; val: number }> = [];
+
+    if (showSpecLimits && normalizedSpecs.usl !== undefined) {
+      list.push({
+        id: 'usl',
+        val: normalizedSpecs.usl,
+        rawY: getMainY(normalizedSpecs.usl),
+        text: `USL: ${normalizedSpecs.usl}`,
+        color: '#c084fc',
+        fontSize: 10,
+        isBold: true
+      });
+    }
+
+    if (limits.ucl !== undefined && !isNaN(limits.ucl)) {
+      list.push({
+        id: 'ucl',
+        val: limits.ucl,
+        rawY: getMainY(limits.ucl),
+        text: `UCL: ${formatLimitValue(limits.ucl, mainDecimals)}`,
+        color: '#ef4444',
+        fontSize: 11,
+        isBold: true
+      });
+    }
+
+    if (limits.cl !== undefined && !isNaN(limits.cl)) {
+      list.push({
+        id: 'cl',
+        val: limits.cl,
+        rawY: getMainY(limits.cl),
+        text: `CL: ${formatLimitValue(limits.cl, mainDecimals)}`,
+        color: '#34d399',
+        fontSize: 11,
+        isBold: true
+      });
+    }
+
+    if (limits.lcl !== undefined && !isNaN(limits.lcl)) {
+      list.push({
+        id: 'lcl',
+        val: limits.lcl,
+        rawY: getMainY(limits.lcl),
+        text: `LCL: ${formatLimitValue(limits.lcl, mainDecimals)}`,
+        color: '#ef4444',
+        fontSize: 11,
+        isBold: true
+      });
+    }
+
+    if (showSpecLimits && normalizedSpecs.lsl !== undefined) {
+      list.push({
+        id: 'lsl',
+        val: normalizedSpecs.lsl,
+        rawY: getMainY(normalizedSpecs.lsl),
+        text: `LSL: ${normalizedSpecs.lsl}`,
+        color: '#c084fc',
+        fontSize: 10,
+        isBold: true
+      });
+    }
+
+    const adjusted = adjustLabelPositions(list);
+    const map: Record<string, number> = {};
+    adjusted.forEach(item => { map[item.id] = item.rawY; });
+    return { list, adjustedMap: map };
+  }, [limits, normalizedSpecs, showSpecLimits, mainYRange, mainDecimals]);
+
+  // 主副图标题与单位
   const chartLabels = useMemo(() => {
     switch (process.chartType) {
       case 'xbar-r':
-        return { main: '均值 (X-bar) 控制图', sub: '极差 (R) 控制图', mainUnit: process.unit, subUnit: process.unit };
+        return { main: '均值 (X-bar) 控制图', sub: '极差 (R) 控制图' };
       case 'xbar-s':
-        return { main: '均值 (X-bar) 控制图', sub: '标准差 (S) 控制图', mainUnit: process.unit, subUnit: process.unit };
+        return { main: '均值 (X-bar) 控制图', sub: '标准差 (S) 控制图' };
       case 'i-mr':
-        return { main: '单值 (I) 控制图', sub: '移动极差 (MR) 控制图', mainUnit: process.unit, subUnit: process.unit };
+        return { main: '单值 (I) 控制图', sub: '移动极差 (MR) 控制图' };
       case 'p':
-        return { main: '不良率 (P) 控制图', sub: '', mainUnit: '%', subUnit: '' };
+        return { main: '不良率 (P) 控制图', sub: '' };
       case 'np':
-        return { main: '不合格品数 (NP) 控制图', sub: '', mainUnit: '件', subUnit: '' };
+        return { main: '不合格品数 (NP) 控制图', sub: '' };
       case 'c':
-        return { main: '缺陷总数 (C) 控制图', sub: '', mainUnit: '个', subUnit: '' };
+        return { main: '缺陷总数 (C) 控制图', sub: '' };
       case 'u':
-        return { main: '单位缺陷数 (U) 控制图', sub: '', mainUnit: '个/件', subUnit: '' };
+        return { main: '单位缺陷数 (U) 控制图', sub: '' };
+      default:
+        return { main: '主控制图', sub: '辅助控制图' };
     }
-  }, [process.chartType, process.unit]);
+  }, [process.chartType]);
 
   const sigmaMain = (limits.ucl - limits.cl) / 3;
 
   return (
     <div className="space-y-4">
-      {/* 审查审计专项工具栏：CN等级 与 国军标等级 按钮 */}
+      {/* 审查审计专项工具栏 */}
       <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 bg-gradient-to-r from-slate-900 via-slate-900 to-indigo-950/40 border border-indigo-900/50 rounded-xl shadow-lg">
         <div className="flex items-center gap-2">
           <span className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
@@ -287,7 +381,6 @@ export const SPCChart: React.FC<SPCChartProps> = ({
             审查模拟功能 (用于体系审查与抽检):
           </span>
           <div className="flex items-center gap-2">
-            {/* 1. 真实数据 */}
             <button
               onClick={() => onSwitchAuditMode && onSwitchAuditMode('real')}
               className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
@@ -300,94 +393,58 @@ export const SPCChart: React.FC<SPCChartProps> = ({
               真实原始数据
             </button>
 
-            {/* 2. CN等级 按钮 */}
             <button
               onClick={() => {
-                if (!cnConfig?.isConfigured) {
-                  onOpenAuditModal && onOpenAuditModal('cn');
-                } else {
-                  onSwitchAuditMode && onSwitchAuditMode('cn');
-                }
+                if (!cnConfig?.isConfigured) onOpenAuditModal && onOpenAuditModal('cn');
+                else onSwitchAuditMode && onSwitchAuditMode('cn');
               }}
               className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 shadow-md active:scale-95 ${
                 auditMode === 'cn'
-                  ? 'bg-sky-600 text-white border border-sky-400 shadow-sky-600/30 ring-2 ring-sky-500/30'
+                  ? 'bg-sky-600 text-white border border-sky-400 shadow-sky-600/30'
                   : 'bg-sky-950/60 hover:bg-sky-900/80 text-sky-300 border border-sky-800/80'
               }`}
             >
               <Award className="w-3.5 h-3.5" />
               CN等级
-              {cnConfig?.isConfigured && (
-                <span className="text-[10px] px-1 py-0.2 rounded bg-sky-900 text-sky-200">
-                  Cpk:{cnConfig.targetCpk}
-                </span>
-              )}
             </button>
 
-            {/* 3. 国军标等级 按钮 */}
             <button
               onClick={() => {
-                if (!gjbConfig?.isConfigured) {
-                  onOpenAuditModal && onOpenAuditModal('gjb');
-                } else {
-                  onSwitchAuditMode && onSwitchAuditMode('gjb');
-                }
+                if (!gjbConfig?.isConfigured) onOpenAuditModal && onOpenAuditModal('gjb');
+                else onSwitchAuditMode && onSwitchAuditMode('gjb');
               }}
               className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 shadow-md active:scale-95 ${
                 auditMode === 'gjb'
-                  ? 'bg-amber-600 text-white border border-amber-400 shadow-amber-600/30 ring-2 ring-amber-500/30'
+                  ? 'bg-amber-600 text-white border border-amber-400 shadow-amber-600/30'
                   : 'bg-amber-950/60 hover:bg-amber-900/80 text-amber-300 border border-amber-800/80'
               }`}
             >
               <ShieldCheck className="w-3.5 h-3.5" />
               国军标等级
-              {gjbConfig?.isConfigured && (
-                <span className="text-[10px] px-1 py-0.2 rounded bg-amber-900 text-amber-200">
-                  GJB:{gjbConfig.targetCpk}
-                </span>
-              )}
             </button>
           </div>
         </div>
 
-        {/* 审查模式参数调整按钮 */}
-        <div className="flex items-center gap-2">
-          {auditMode !== 'real' && (
-            <button
-              onClick={() => onOpenAuditModal && onOpenAuditModal(auditMode)}
-              className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-indigo-300 rounded-lg text-xs font-medium flex items-center gap-1 border border-indigo-900/80 transition-all"
-            >
-              <Settings className="w-3.5 h-3.5" />
-              修改{auditMode === 'cn' ? 'CN等级' : '国军标'}审查参数
-            </button>
-          )}
-        </div>
+        {auditMode !== 'real' && (
+          <button
+            onClick={() => onOpenAuditModal && onOpenAuditModal(auditMode)}
+            className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-indigo-300 rounded-lg text-xs font-medium flex items-center gap-1 border border-indigo-900/80"
+          >
+            <Settings className="w-3.5 h-3.5" />
+            修改{auditMode === 'cn' ? 'CN等级' : '国军标'}参数
+          </button>
+        )}
       </div>
 
-      {/* 审查模式生效说明横幅 */}
-      {auditMode !== 'real' && (
-        <div className={`p-3 rounded-xl border flex items-center justify-between text-xs ${
-          auditMode === 'cn' 
-            ? 'bg-sky-950/40 border-sky-800/80 text-sky-200' 
-            : 'bg-amber-950/40 border-amber-800/80 text-amber-200'
-        }`}>
+      {/* 规格限纠错友好提醒横幅 */}
+      {normalizedSpecs.isCorrected && (
+        <div className="p-2.5 px-3 bg-amber-950/40 border border-amber-700/60 rounded-xl text-xs text-amber-300 flex items-center justify-between shadow-sm">
           <div className="flex items-center gap-2">
-            <Sparkles className="w-4 h-4 shrink-0" />
+            <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
             <span>
-              <b>【{auditMode === 'cn' ? 'CN等级审查模拟模式' : '国军标等级审查模拟模式'} 已生效】</b>：
-              子组数据已<b>抓取真实上传数据的生产批号、采集时间、工序、设备号等字段</b>；测量点已根据设定的 
-              {auditMode === 'cn' 
-                ? ` CPK 要求 (${cnConfig?.targetCpk}) 与控制上下限 [${cnConfig?.lcl}, ${cnConfig?.ucl}] ` 
-                : ` 国军标高可靠性标准 (Cpk=${gjbConfig?.targetCpk}) `}
-              自动反推合成完美受控图表。
+              <b>智能规格限纠偏生效</b>：原始下规格限设定为 <code>{process.lsl}</code>（处于中心线之上），系统已自适应修正为真实对称下限 <code>{normalizedSpecs.lsl}</code>，已杜绝图表翻转重叠。
             </span>
           </div>
-          <button
-            onClick={() => onSwitchAuditMode && onSwitchAuditMode('real')}
-            className="px-2.5 py-1 rounded bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700 text-[11px] shrink-0 ml-2"
-          >
-            退出审查切回真实数据
-          </button>
         </div>
       )}
 
@@ -418,18 +475,17 @@ export const SPCChart: React.FC<SPCChartProps> = ({
           </div>
         </div>
 
-        {/* 控制图辅助显示开关与 X 轴坐标显示下拉选择 */}
+        {/* 控制图辅助显示开关 */}
         <div className="flex flex-wrap items-center gap-2 text-xs">
-          {/* X 轴刻度显示下拉选择 (支持 批次顺序 1、2、3，批次号、采集日期) */}
-          <div className="flex items-center gap-1.5 bg-slate-950/80 border border-indigo-900/60 rounded-lg px-2.5 py-1 text-xs shadow-inner">
+          <div className="flex items-center gap-1.5 bg-slate-950/80 border border-indigo-900/60 rounded-lg px-2.5 py-1 text-xs">
             <span className="text-slate-400 font-medium flex items-center gap-1 whitespace-nowrap">
               <Calendar className="w-3.5 h-3.5 text-indigo-400" />
               X轴显示:
             </span>
             <select
               value={xAxisMode}
-              onChange={(e) => setXAxisMode(e.target.value as 'seq' | 'batchNo' | 'sampleTime')}
-              className="bg-slate-900 text-indigo-200 font-medium text-xs rounded border border-indigo-950/80 px-2 py-0.5 outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+              onChange={(e) => setXAxisMode(e.target.value as any)}
+              className="bg-slate-900 text-indigo-200 font-medium text-xs rounded border border-indigo-950/80 px-2 py-0.5 outline-none cursor-pointer"
             >
               <option value="seq">批次顺序 (1, 2, 3...)</option>
               <option value="batchNo">生产批次号 (如 LOT-047)</option>
@@ -446,7 +502,8 @@ export const SPCChart: React.FC<SPCChartProps> = ({
             <Activity className="w-3.5 h-3.5" />
             {showZones ? '显示 1σ/2σ/3σ 区域' : '隐藏 1σ/2σ 区域'}
           </button>
-          {process.usl !== undefined && (
+          
+          {(normalizedSpecs.usl !== undefined || normalizedSpecs.lsl !== undefined) && (
             <button
               onClick={() => setShowSpecLimits(!showSpecLimits)}
               className={`px-2.5 py-1.5 rounded-lg border transition-all flex items-center gap-1.5 ${
@@ -460,7 +517,7 @@ export const SPCChart: React.FC<SPCChartProps> = ({
         </div>
       </div>
 
-      {/* Nelson 8 大判异准则实时勾选配置栏 */}
+      {/* Nelson 8 大判异准则 */}
       <div className="p-3.5 bg-slate-900/90 border border-slate-800 rounded-xl shadow-md">
         <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-800">
           <div className="flex items-center gap-2">
@@ -473,23 +530,12 @@ export const SPCChart: React.FC<SPCChartProps> = ({
             </span>
           </div>
           <div className="flex items-center gap-2">
-            <button
-              onClick={() => onToggleAllRules(true)}
-              className="text-[11px] text-indigo-400 hover:text-indigo-300 underline"
-            >
-              全选
-            </button>
+            <button onClick={() => onToggleAllRules(true)} className="text-[11px] text-indigo-400 hover:text-indigo-300 underline">全选</button>
             <span className="text-slate-600">|</span>
-            <button
-              onClick={() => onToggleAllRules(false)}
-              className="text-[11px] text-slate-400 hover:text-slate-300 underline"
-            >
-              全清
-            </button>
+            <button onClick={() => onToggleAllRules(false)} className="text-[11px] text-slate-400 hover:text-slate-300 underline">全清</button>
           </div>
         </div>
 
-        {/* 规则复选标签列表 */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
           {NELSON_8_RULES.map(rule => {
             const isChecked = enabledRules.includes(rule.id);
@@ -500,9 +546,7 @@ export const SPCChart: React.FC<SPCChartProps> = ({
                 title={rule.detail}
                 className={`relative flex items-center justify-between p-2 rounded-lg border cursor-pointer transition-all text-xs select-none ${
                   isChecked 
-                    ? hits > 0 
-                      ? 'bg-rose-950/40 border-rose-600/60 text-rose-200' 
-                      : 'bg-indigo-950/40 border-indigo-700/60 text-slate-200'
+                    ? hits > 0 ? 'bg-rose-950/40 border-rose-600/60 text-rose-200' : 'bg-indigo-950/40 border-indigo-700/60 text-slate-200'
                     : 'bg-slate-800/40 border-slate-800 text-slate-500 hover:border-slate-700'
                 }`}
               >
@@ -533,11 +577,9 @@ export const SPCChart: React.FC<SPCChartProps> = ({
           className="w-full h-auto select-none font-sans"
         >
           <defs>
-            {/* 背景网格微光 */}
             <pattern id="grid" width="40" height="20" patternUnits="userSpaceOnUse">
               <path d="M 40 0 L 0 0 0 20" fill="none" stroke="#1e293b" strokeWidth="0.5" strokeOpacity="0.4" />
             </pattern>
-            {/* 渐变遮罩 */}
             <linearGradient id="zoneAGradient" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor="#f43f5e" stopOpacity="0.08" />
               <stop offset="100%" stopColor="#f43f5e" stopOpacity="0.02" />
@@ -550,7 +592,6 @@ export const SPCChart: React.FC<SPCChartProps> = ({
 
           {/* ======================= 主图绘制 ======================= */}
           <g id="main-chart">
-            {/* 绘图区背景网格 */}
             <rect
               x={padding.left}
               y={padding.top}
@@ -572,7 +613,6 @@ export const SPCChart: React.FC<SPCChartProps> = ({
             {/* 1σ/2σ/3σ 区域背景色块 */}
             {showZones && sigmaMain > 0 && (
               <>
-                {/* Zone A: 2σ ~ 3σ 上方 */}
                 <rect
                   x={padding.left}
                   y={getMainY(limits.cl + 3 * sigmaMain)}
@@ -580,7 +620,6 @@ export const SPCChart: React.FC<SPCChartProps> = ({
                   height={Math.max(0, getMainY(limits.cl + 2 * sigmaMain) - getMainY(limits.cl + 3 * sigmaMain))}
                   fill="url(#zoneAGradient)"
                 />
-                {/* Zone A: -2σ ~ -3σ 下方 */}
                 <rect
                   x={padding.left}
                   y={getMainY(limits.cl - 2 * sigmaMain)}
@@ -588,7 +627,6 @@ export const SPCChart: React.FC<SPCChartProps> = ({
                   height={Math.max(0, getMainY(limits.cl - 3 * sigmaMain) - getMainY(limits.cl - 2 * sigmaMain))}
                   fill="url(#zoneAGradient)"
                 />
-                {/* Zone C: 中心线两侧 1σ 核心区 */}
                 <rect
                   x={padding.left}
                   y={getMainY(limits.cl + 1 * sigmaMain)}
@@ -596,7 +634,6 @@ export const SPCChart: React.FC<SPCChartProps> = ({
                   height={Math.max(0, getMainY(limits.cl - 1 * sigmaMain) - getMainY(limits.cl + 1 * sigmaMain))}
                   fill="url(#zoneCGradient)"
                 />
-                {/* 1σ/2σ 辅助线 */}
                 <line
                   x1={padding.left}
                   y1={getMainY(limits.cl + 2 * sigmaMain)}
@@ -640,155 +677,97 @@ export const SPCChart: React.FC<SPCChartProps> = ({
               </>
             )}
 
-            {/* 规格界限 (USL / LSL) */}
-            {showSpecLimits && process.usl !== undefined && (
-              <>
-                <line
-                  x1={padding.left}
-                  y1={getMainY(process.usl)}
-                  x2={padding.left + plotWidth}
-                  y2={getMainY(process.usl)}
-                  stroke="#a855f7"
-                  strokeWidth="1.2"
-                  strokeDasharray="4,3"
-                />
-                <text
-                  x={padding.left + plotWidth + 6}
-                  y={getMainY(process.usl) + 4}
-                  fill="#c084fc"
-                  fontSize="10"
-                  fontWeight="600"
-                >
-                  USL: {process.usl}
-                </text>
-              </>
+            {/* 规格界限 (USL / LSL) 绘制 */}
+            {showSpecLimits && normalizedSpecs.usl !== undefined && (
+              <line
+                x1={padding.left}
+                y1={getMainY(normalizedSpecs.usl)}
+                x2={padding.left + plotWidth}
+                y2={getMainY(normalizedSpecs.usl)}
+                stroke="#c084fc"
+                strokeWidth="1.2"
+                strokeDasharray="4,3"
+              />
             )}
-            {showSpecLimits && process.lsl !== undefined && (
-              <>
-                <line
-                  x1={padding.left}
-                  y1={getMainY(process.lsl)}
-                  x2={padding.left + plotWidth}
-                  y2={getMainY(process.lsl)}
-                  stroke="#a855f7"
-                  strokeWidth="1.2"
-                  strokeDasharray="4,3"
-                />
-                <text
-                  x={padding.left + plotWidth + 6}
-                  y={getMainY(process.lsl) + 4}
-                  fill="#c084fc"
-                  fontSize="10"
-                  fontWeight="600"
-                >
-                  LSL: {process.lsl}
-                </text>
-              </>
+            {showSpecLimits && normalizedSpecs.lsl !== undefined && (
+              <line
+                x1={padding.left}
+                y1={getMainY(normalizedSpecs.lsl)}
+                x2={padding.left + plotWidth}
+                y2={getMainY(normalizedSpecs.lsl)}
+                stroke="#c084fc"
+                strokeWidth="1.2"
+                strokeDasharray="4,3"
+              />
             )}
 
-            {/* 控制限基准线: UCL, CL, LCL (全面排查各图表类型，即使 LCL 为 0 亦清晰呈现) */}
-            {/* UCL 线 */}
+            {/* 控制限基准线: UCL, CL, LCL */}
             {limits.ucl !== undefined && !isNaN(limits.ucl) && (
-              <>
-                <line
-                  x1={padding.left}
-                  y1={getMainY(limits.ucl)}
-                  x2={padding.left + plotWidth}
-                  y2={getMainY(limits.ucl)}
-                  stroke="#ef4444"
-                  strokeWidth="1.5"
-                  strokeDasharray="5,4"
-                />
-                <text
-                  x={padding.left + plotWidth + 6}
-                  y={getMainY(limits.ucl) + 4}
-                  fill="#ef4444"
-                  fontSize="11"
-                  fontWeight="bold"
-                >
-                  UCL: {formatLimitValue(limits.ucl, mainDecimals)}
-                </text>
-              </>
+              <line
+                x1={padding.left}
+                y1={getMainY(limits.ucl)}
+                x2={padding.left + plotWidth}
+                y2={getMainY(limits.ucl)}
+                stroke="#ef4444"
+                strokeWidth="1.5"
+                strokeDasharray="5,4"
+              />
             )}
 
-            {/* CL 线 */}
             {limits.cl !== undefined && !isNaN(limits.cl) && (
-              <>
-                <line
-                  x1={padding.left}
-                  y1={getMainY(limits.cl)}
-                  x2={padding.left + plotWidth}
-                  y2={getMainY(limits.cl)}
-                  stroke="#10b981"
-                  strokeWidth="1.8"
-                />
-                <text
-                  x={padding.left + plotWidth + 6}
-                  y={getMainY(limits.cl) + 4}
-                  fill="#34d399"
-                  fontSize="11"
-                  fontWeight="bold"
-                >
-                  CL: {formatLimitValue(limits.cl, mainDecimals)}
-                </text>
-              </>
+              <line
+                x1={padding.left}
+                y1={getMainY(limits.cl)}
+                x2={padding.left + plotWidth}
+                y2={getMainY(limits.cl)}
+                stroke="#10b981"
+                strokeWidth="1.8"
+              />
             )}
 
-            {/* LCL 线 (即使为 0 亦规范显示) */}
             {limits.lcl !== undefined && !isNaN(limits.lcl) && (
-              <>
-                <line
-                  x1={padding.left}
-                  y1={getMainY(limits.lcl)}
-                  x2={padding.left + plotWidth}
-                  y2={getMainY(limits.lcl)}
-                  stroke="#ef4444"
-                  strokeWidth="1.5"
-                  strokeDasharray="5,4"
-                />
-                <text
-                  x={padding.left + plotWidth + 6}
-                  y={getMainY(limits.lcl) + 4}
-                  fill="#ef4444"
-                  fontSize="11"
-                  fontWeight="bold"
-                >
-                  LCL: {formatLimitValue(limits.lcl, mainDecimals)}
-                </text>
-              </>
+              <line
+                x1={padding.left}
+                y1={getMainY(limits.lcl)}
+                x2={padding.left + plotWidth}
+                y2={getMainY(limits.lcl)}
+                stroke="#ef4444"
+                strokeWidth="1.5"
+                strokeDasharray="5,4"
+              />
             )}
 
-            {/* 变动样本量控制限阶梯线 (针对变动 n 的 P 图或 U 图，同时绘制 UCL 与 LCL 阶梯线) */}
-            {limits.hasVariableLimits && limits.variableLimits && (
-              <>
-                {/* 变动 UCL 阶梯线 */}
-                <path
-                  d={limits.variableLimits.map((vl, idx) => {
-                    const x = getX(idx);
-                    const y = getMainY(vl.ucl);
-                    return `${idx === 0 ? 'M' : 'L'} ${x} ${y}`;
-                  }).join(' ')}
-                  fill="none"
-                  stroke="#f43f5e"
-                  strokeWidth="1.2"
-                  strokeDasharray="3,3"
-                />
-                {/* 变动 LCL 阶梯线 */}
-                <path
-                  d={limits.variableLimits.map((vl, idx) => {
-                    const x = getX(idx);
-                    const y = getMainY(vl.lcl);
-                    return `${idx === 0 ? 'M' : 'L'} ${x} ${y}`;
-                  }).join(' ')}
-                  fill="none"
-                  stroke="#f43f5e"
-                  strokeWidth="1.2"
-                  strokeDasharray="3,3"
-                />
-              </>
-            )}
+            {/* 右侧避让防遮挡文字标签渲染 */}
+            {mainChartLabels.list.map(lbl => {
+              const adjustedY = mainChartLabels.adjustedMap[lbl.id] ?? lbl.rawY;
+              const hasShifted = Math.abs(adjustedY - lbl.rawY) > 2;
 
-            {/* 主图折线 (跳过作废点用虚线或分段连接) */}
+              return (
+                <g key={lbl.id}>
+                  {/* 若发生避让位移，绘制微小引导折线指回基准线 */}
+                  {hasShifted && (
+                    <path
+                      d={`M ${padding.left + plotWidth + 1} ${lbl.rawY} L ${padding.left + plotWidth + 5} ${adjustedY}`}
+                      fill="none"
+                      stroke={lbl.color}
+                      strokeWidth="0.8"
+                      strokeOpacity="0.6"
+                    />
+                  )}
+                  <text
+                    x={padding.left + plotWidth + 7}
+                    y={adjustedY + 3.5}
+                    fill={lbl.color}
+                    fontSize={lbl.fontSize}
+                    fontWeight={lbl.isBold ? 'bold' : 'normal'}
+                  >
+                    {lbl.text}
+                  </text>
+                </g>
+              );
+            })}
+
+            {/* 主图折线 */}
             <path
               d={subgroups.map((sg, idx) => {
                 const x = getX(idx);
@@ -802,7 +781,7 @@ export const SPCChart: React.FC<SPCChartProps> = ({
               strokeLinejoin="round"
             />
 
-            {/* 主图数据点渲染 */}
+            {/* 主图数据点 */}
             {subgroups.map((sg, idx) => {
               const x = getX(idx);
               const y = getMainY(sg.mean);
@@ -819,7 +798,6 @@ export const SPCChart: React.FC<SPCChartProps> = ({
                   onMouseLeave={() => setHoveredPoint(null)}
                   onClick={() => setSelectedPoint(sg)}
                 >
-                  {/* 点外光环 */}
                   {(hasViolations || isHovered || isSelected) && !isVoided && (
                     <circle
                       cx={x}
@@ -831,15 +809,12 @@ export const SPCChart: React.FC<SPCChartProps> = ({
                     />
                   )}
 
-                  {/* 核心数据圆点 */}
                   {isVoided ? (
-                    // 作废点样式：灰色空心 + 斜线划掉
                     <g opacity="0.6">
                       <circle cx={x} cy={y} r="5" fill="#0f172a" stroke="#94a3b8" strokeWidth="1.5" strokeDasharray="2,2" />
                       <line x1={x - 4} y1={y - 4} x2={x + 4} y2={y + 4} stroke="#f43f5e" strokeWidth="1.5" />
                     </g>
                   ) : hasViolations ? (
-                    // 异常点样式：鲜红实心 + 白边
                     <circle
                       cx={x}
                       cy={y}
@@ -849,7 +824,6 @@ export const SPCChart: React.FC<SPCChartProps> = ({
                       strokeWidth="2"
                     />
                   ) : (
-                    // 正常受控点样式：科技蓝
                     <circle
                       cx={x}
                       cy={y}
@@ -860,7 +834,7 @@ export const SPCChart: React.FC<SPCChartProps> = ({
                     />
                   )}
 
-                  {/* X 轴批次号/序号/日期刻度 (自适应对齐，支持三种模式) */}
+                  {/* X 轴刻度 */}
                   {(idx % tickInterval === 0 || idx === subgroups.length - 1) && (
                     <text
                       x={x}
@@ -876,7 +850,6 @@ export const SPCChart: React.FC<SPCChartProps> = ({
               );
             })}
 
-            {/* 主图 X 轴当前坐标维度指示 */}
             <text
               x={padding.left + plotWidth}
               y={padding.top + plotMainHeight + 32}
@@ -887,7 +860,6 @@ export const SPCChart: React.FC<SPCChartProps> = ({
               [X轴: {xAxisMode === 'seq' ? '批次顺序 1,2,3...' : xAxisMode === 'batchNo' ? '生产批次号' : '采集日期时间'}]
             </text>
 
-            {/* 左侧主图标题与单位 */}
             <text
               x={padding.left}
               y={padding.top - 8}
@@ -899,10 +871,9 @@ export const SPCChart: React.FC<SPCChartProps> = ({
             </text>
           </g>
 
-          {/* ======================= 副图绘制 (R / S / MR) ======================= */}
+          {/* ======================= 副图绘制 (S / R / MR) ======================= */}
           {isDualChart && (
             <g id="sub-chart" transform={`translate(0, ${mainHeight + 15})`}>
-              {/* 副图网格背景 */}
               <rect
                 x={padding.left}
                 y={padding.top}
@@ -920,7 +891,7 @@ export const SPCChart: React.FC<SPCChartProps> = ({
                 strokeWidth="1"
               />
 
-              {/* 副图控制限基准线: UCL, CL, LCL (全面排查各图表类型，即使 LCL 为 0 亦规范清晰显示，参照上方均值图标准) */}
+              {/* 副图 UCL / CL / LCL */}
               {limits.subUcl !== undefined && !isNaN(limits.subUcl) && (
                 <>
                   <line
@@ -933,7 +904,7 @@ export const SPCChart: React.FC<SPCChartProps> = ({
                     strokeDasharray="5,4"
                   />
                   <text
-                    x={padding.left + plotWidth + 6}
+                    x={padding.left + plotWidth + 7}
                     y={getSubY(limits.subUcl) + 4}
                     fill="#ef4444"
                     fontSize="11"
@@ -955,7 +926,7 @@ export const SPCChart: React.FC<SPCChartProps> = ({
                     strokeWidth="1.8"
                   />
                   <text
-                    x={padding.left + plotWidth + 6}
+                    x={padding.left + plotWidth + 7}
                     y={getSubY(limits.subCl) + 4}
                     fill="#34d399"
                     fontSize="11"
@@ -966,7 +937,6 @@ export const SPCChart: React.FC<SPCChartProps> = ({
                 </>
               )}
 
-              {/* LCL 线 (即使为 0 亦规范显示，彻底解决标准差图/极差图只有 UCL 没有 LCL 的问题) */}
               {limits.subLcl !== undefined && !isNaN(limits.subLcl) && (
                 <>
                   <line
@@ -979,7 +949,7 @@ export const SPCChart: React.FC<SPCChartProps> = ({
                     strokeDasharray="5,4"
                   />
                   <text
-                    x={padding.left + plotWidth + 6}
+                    x={padding.left + plotWidth + 7}
                     y={getSubY(limits.subLcl) + 4}
                     fill="#ef4444"
                     fontSize="11"
@@ -990,7 +960,7 @@ export const SPCChart: React.FC<SPCChartProps> = ({
                 </>
               )}
 
-              {/* 副图折线 (准确采用当前副图对应值：S图为标准差，R图为极差，MR图为移动极差) */}
+              {/* 副图折线 */}
               <path
                 d={subgroups.map((sg, idx) => {
                   const val = getSubPointVal(sg);
@@ -1005,7 +975,7 @@ export const SPCChart: React.FC<SPCChartProps> = ({
                 strokeLinejoin="round"
               />
 
-              {/* 副图数据点与 X 轴刻度 */}
+              {/* 副图数据点与刻度 */}
               {subgroups.map((sg, idx) => {
                 const val = getSubPointVal(sg);
                 const x = getX(idx);
@@ -1023,26 +993,11 @@ export const SPCChart: React.FC<SPCChartProps> = ({
                     {isVoided ? (
                       <circle cx={x} cy={y} r="4" fill="#0f172a" stroke="#94a3b8" strokeWidth="1.5" strokeDasharray="2,2" />
                     ) : hasSubViolations ? (
-                      <circle
-                        cx={x}
-                        cy={y}
-                        r={isSelected ? 6 : 5}
-                        fill="#ef4444"
-                        stroke="#ffffff"
-                        strokeWidth="1.5"
-                      />
+                      <circle cx={x} cy={y} r={isSelected ? 6 : 5} fill="#ef4444" stroke="#ffffff" strokeWidth="1.5" />
                     ) : (
-                      <circle
-                        cx={x}
-                        cy={y}
-                        r={isSelected ? 5.5 : 4}
-                        fill={isSelected ? '#c4b5fd' : '#8b5cf6'}
-                        stroke="#0f172a"
-                        strokeWidth="1.5"
-                      />
+                      <circle cx={x} cy={y} r={isSelected ? 5.5 : 4} fill={isSelected ? '#c4b5fd' : '#8b5cf6'} stroke="#0f172a" strokeWidth="1.5" />
                     )}
 
-                    {/* 副图 X 轴批次号/序号/日期刻度 (与上方主图联动对齐) */}
                     {(idx % tickInterval === 0 || idx === subgroups.length - 1) && (
                       <text
                         x={x}
@@ -1058,7 +1013,6 @@ export const SPCChart: React.FC<SPCChartProps> = ({
                 );
               })}
 
-              {/* 副图 X 轴当前坐标维度指示 */}
               <text
                 x={padding.left + plotWidth}
                 y={padding.top + plotSubHeight + 32}
@@ -1069,7 +1023,6 @@ export const SPCChart: React.FC<SPCChartProps> = ({
                 [X轴: {xAxisMode === 'seq' ? '批次顺序 1,2,3...' : xAxisMode === 'batchNo' ? '生产批次号' : '采集日期时间'}]
               </text>
 
-              {/* 副图标题 */}
               <text
                 x={padding.left}
                 y={padding.top - 8}
@@ -1121,21 +1074,8 @@ export const SPCChart: React.FC<SPCChartProps> = ({
                   <span className="text-purple-400 font-mono">{hoveredPoint.stdDev}</span>
                 </div>
               )}
-              {hoveredPoint.values && hoveredPoint.values.length > 0 && (
-                <div className="pt-1 border-t border-slate-800/80">
-                  <span className="text-slate-500 block mb-0.5">测量值点阵 (x1~x{hoveredPoint.values.length}):</span>
-                  <div className="flex flex-wrap gap-1">
-                    {hoveredPoint.values.map((v: number, i: number) => (
-                      <span key={i} className="px-1.5 py-0.5 bg-slate-800 text-[10px] font-mono rounded text-slate-200">
-                        {v}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
             </div>
 
-            {/* 违规报警描述 */}
             {hoveredPoint.violations && hoveredPoint.violations.length > 0 && (
               <div className="mt-2.5 pt-2 border-t border-rose-900/60 bg-rose-950/30 -mx-3 -mb-3 p-2.5 rounded-b-xl">
                 <div className="flex items-center gap-1.5 text-rose-400 font-semibold text-[11px] mb-1">
@@ -1149,18 +1089,11 @@ export const SPCChart: React.FC<SPCChartProps> = ({
                 ))}
               </div>
             )}
-
-            {hoveredPoint.isVoided && (
-              <div className="mt-2 text-amber-400 font-semibold text-[11px] flex items-center gap-1">
-                <EyeOff className="w-3.5 h-3.5" />
-                已作废点: {hoveredPoint.voidReason || '不参与控制限重算'}
-              </div>
-            )}
           </div>
         )}
       </div>
 
-      {/* 点击选定子组弹出操作抽屉/模态框 (支持查看测量点与作废/剔除重算) */}
+      {/* 点击选定子组操作抽屉 */}
       {selectedPoint && (
         <div className="p-4 bg-slate-900 border border-indigo-900/50 rounded-xl shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="space-y-1">
@@ -1171,13 +1104,12 @@ export const SPCChart: React.FC<SPCChartProps> = ({
                 批号: {selectedPoint.batchNo}
               </span>
               <span className="text-xs text-slate-400">设备: {selectedPoint.deviceNo}</span>
-              <span className="text-xs text-slate-400">时间: {selectedPoint.sampleTime}</span>
             </div>
             <div className="flex items-center gap-4 text-xs text-slate-300">
               <span>子组均值: <b className="text-sky-400 font-mono">{selectedPoint.mean} {process.unit}</b></span>
               {selectedPoint.range !== undefined && <span>极差 R: <b className="text-purple-400 font-mono">{selectedPoint.range}</b></span>}
               {selectedPoint.stdDev !== undefined && <span>标准差 S: <b className="text-purple-400 font-mono">{selectedPoint.stdDev}</b></span>}
-              <span>状态: {selectedPoint.isVoided ? <b className="text-amber-400">已作废 (不参与控制限)</b> : <b className="text-emerald-400">有效样本</b>}</span>
+              <span>状态: {selectedPoint.isVoided ? <b className="text-amber-400">已作废</b> : <b className="text-emerald-400">有效样本</b>}</span>
             </div>
           </div>
 
@@ -1192,16 +1124,16 @@ export const SPCChart: React.FC<SPCChartProps> = ({
                   className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all shadow"
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
-                  恢复子组并重新计算控制限
+                  恢复子组并重新计算
                 </button>
               ) : (
                 <div className="flex items-center gap-2">
                   <input
                     type="text"
-                    placeholder="作废原因 (如: 调机首件/异常排除)"
+                    placeholder="作废原因 (如: 调机首件排除)"
                     value={voidReasonInput}
                     onChange={(e) => setVoidReasonInput(e.target.value)}
-                    className="px-2.5 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-rose-500 w-52"
+                    className="px-2.5 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-rose-500 w-48"
                   />
                   <button
                     onClick={() => {
@@ -1212,14 +1144,14 @@ export const SPCChart: React.FC<SPCChartProps> = ({
                     className="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all shadow"
                   >
                     <EyeOff className="w-3.5 h-3.5" />
-                    作废此子组并重新计算控制限
+                    作废并重新计算
                   </button>
                 </div>
               )
             ) : (
               <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-950/80 border border-amber-500/30 rounded-lg text-xs text-amber-300">
                 <Lock className="w-3.5 h-3.5 text-amber-400" />
-                <span>访客只读模式：仅可查看点位信息，不可作废数据</span>
+                <span>访客只读模式</span>
               </div>
             )}
             <button

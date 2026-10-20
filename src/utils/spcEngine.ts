@@ -38,13 +38,11 @@ export function computeSubgroupStats(values: number[]): { mean: number; range: n
 
 /**
  * 计算控制限 (UCL, CL, LCL)
- * 核心逻辑：自动根据历史时间段/选定样本计算，过滤掉作废点 (isVoided)
  */
 export function calculateControlLimits(
   subgroups: SubgroupDataPoint[],
   chartType: SPCChartType
 ): ControlLimits {
-  // 只基于未作废的有效子组计算控制限
   const activeSubgroups = subgroups.filter(sg => !sg.isVoided);
   const k = activeSubgroups.length;
   
@@ -52,7 +50,6 @@ export function calculateControlLimits(
     return { ucl: 0, cl: 0, lcl: 0, sigma: 0 };
   }
 
-  // 计算代表性子组大小 n (若变动，取平均容量)
   const avgN = activeSubgroups.reduce((sum, sg) => sum + (sg.n || (sg.values?.length || 1)), 0) / k;
   const factors = getSPCConstants(avgN);
 
@@ -109,11 +106,9 @@ export function calculateControlLimits(
     }
 
     case 'i-mr': {
-      // 单值与移动极差图
       const xTotal = activeSubgroups.reduce((acc, sg) => acc + sg.mean, 0);
       const xBar = xTotal / k;
       
-      // 计算连续移动极差 MR = |Xi - Xi-1|
       let mrTotal = 0;
       let mrCount = 0;
       for (let i = 1; i < activeSubgroups.length; i++) {
@@ -122,15 +117,15 @@ export function calculateControlLimits(
         mrCount++;
       }
       const mrBar = mrCount > 0 ? mrTotal / mrCount : 0;
-      const d2_2 = 1.128; // n=2 时的 d2 系数
+      const d2_2 = 1.128;
       const sigma = d2_2 > 0 ? mrBar / d2_2 : 0;
       
       const ucl = xBar + 3 * (mrBar / d2_2);
       const lcl = xBar - 3 * (mrBar / d2_2);
       
-      const mrUcl = 3.267 * mrBar; // D4(2) = 3.267
+      const mrUcl = 3.267 * mrBar;
       const mrCl = mrBar;
-      const mrLcl = 0; // D3(2) = 0
+      const mrLcl = 0;
       
       return {
         ucl: Number(ucl.toFixed(4)),
@@ -144,12 +139,10 @@ export function calculateControlLimits(
     }
 
     case 'p': {
-      // 不良率图 p = total_defects / total_samples
       const totalDefects = activeSubgroups.reduce((acc, sg) => acc + (sg.defectCount ?? 0), 0);
       const totalSamples = activeSubgroups.reduce((acc, sg) => acc + (sg.sampleCount ?? sg.n ?? 100), 0);
       const pBar = totalSamples > 0 ? totalDefects / totalSamples : 0;
       
-      // 是否样本量波动
       const sampleSizes = activeSubgroups.map(sg => sg.sampleCount ?? sg.n ?? 100);
       const isVariable = Math.max(...sampleSizes) !== Math.min(...sampleSizes);
       
@@ -184,7 +177,6 @@ export function calculateControlLimits(
     }
 
     case 'np': {
-      // 不合格品数 np
       const totalDefects = activeSubgroups.reduce((acc, sg) => acc + (sg.defectCount ?? 0), 0);
       const totalSamples = activeSubgroups.reduce((acc, sg) => acc + (sg.sampleCount ?? sg.n ?? 100), 0);
       const pBar = totalSamples > 0 ? totalDefects / totalSamples : 0;
@@ -204,7 +196,6 @@ export function calculateControlLimits(
     }
 
     case 'c': {
-      // 缺陷数图 (泊松分布) cBar = total_c / k
       const totalC = activeSubgroups.reduce((acc, sg) => acc + (sg.defectCount ?? sg.mean ?? 0), 0);
       const cBar = totalC / k;
       const cSigma = Math.sqrt(Math.max(0, cBar));
@@ -221,7 +212,6 @@ export function calculateControlLimits(
     }
 
     case 'u': {
-      // 单位缺陷数图 u = total_c / total_n
       const totalC = activeSubgroups.reduce((acc, sg) => acc + (sg.defectCount ?? 0), 0);
       const totalN = activeSubgroups.reduce((acc, sg) => acc + (sg.sampleCount ?? sg.n ?? 1), 0);
       const uBar = totalN > 0 ? totalC / totalN : 0;
@@ -262,22 +252,21 @@ export function calculateControlLimits(
 
 /**
  * Nelson 8大判异规则实时检测
- * 根据用户在前端手动勾选的 enabledRules 列表，对每个子组点进行判异
+ * @param chartType 图表类型，用于精确定位副图统计量（S / R / MR）
  */
 export function evaluateNelsonRules(
   subgroups: SubgroupDataPoint[],
   limits: ControlLimits,
   enabledRuleIds: number[],
-  chartPart: 'main' | 'sub' = 'main'
+  chartPart: 'main' | 'sub' = 'main',
+  chartType: SPCChartType = 'xbar-s'
 ): SubgroupDataPoint[] {
   const cl = chartPart === 'main' ? limits.cl : (limits.subCl ?? limits.cl);
   const ucl = chartPart === 'main' ? limits.ucl : (limits.subUcl ?? limits.ucl);
   const lcl = chartPart === 'main' ? limits.lcl : (limits.subLcl ?? limits.lcl);
   
-  // sigma = (UCL - CL) / 3
   const sigma = (ucl - cl) / 3;
   
-  // 建立深拷贝数组
   const evaluated = subgroups.map(sg => ({
     ...sg,
     violations: sg.violations ? sg.violations.filter(v => v.chartPart !== chartPart) : []
@@ -287,33 +276,33 @@ export function evaluateNelsonRules(
     return evaluated;
   }
 
-  // 获取参与计算的点序列 (包含作废状态标记)
+  // ✅ 核心修复 1: 精准提取子组点，彻底避免 S 图误取 range 导致超差爆红
   const values = evaluated.map(sg => {
     if (chartPart === 'main') {
       return sg.mean;
-    } else {
-      return sg.range ?? sg.stdDev ?? sg.movingRange ?? 0;
     }
+    // 副图严格按照控制图类型提取对应统计量
+    if (chartType === 'xbar-s') {
+      return sg.stdDev !== undefined ? sg.stdDev : (sg.range ?? 0);
+    }
+    if (chartType === 'i-mr') {
+      return sg.movingRange !== undefined ? sg.movingRange : (sg.range ?? 0);
+    }
+    return sg.range !== undefined ? sg.range : (sg.stdDev ?? 0);
   });
 
-  const isEnabled = (id: number) => enabledRuleIds.includes(id);
-
-  // 辅助函数：判断点所在区域
-  // Zone C: |x - cl| <= 1σ
-  // Zone B: 1σ < |x - cl| <= 2σ
-  // Zone A: 2σ < |x - cl| <= 3σ
-  // Outside: |x - cl| > 3σ
-  const getZone = (val: number): { side: 'upper' | 'lower' | 'center'; sigmaLevel: number } => {
-    const diff = val - cl;
-    const side = diff > 0 ? 'upper' : (diff < 0 ? 'lower' : 'center');
-    const absSigma = Math.abs(diff) / sigma;
-    return { side, sigmaLevel: absSigma };
+  // ✅ 核心修复 2: 副图严格遵循 GB/T 4091 规范，禁止对非正态的 S 图/R 图套用 5/6/7/8 规则
+  const isEnabled = (id: number) => {
+    if (!enabledRuleIds.includes(id)) return false;
+    if (chartPart === 'sub') {
+      // 副图只允许规则 1 (超差)、规则 2 (同侧)、规则 3 (单调递增递减)
+      return [1, 2, 3].includes(id);
+    }
+    return true;
   };
 
   for (let i = 0; i < evaluated.length; i++) {
     const val = values[i];
-    const isVoided = evaluated[i].isVoided;
-    // 如果子组已作废，仍然可以显示其自身是否超差，但不用于后续连锁规则判定
     
     // 规则 1: 1点落在 3σ 区外 (超出 UCL 或低于 LCL)
     if (isEnabled(1)) {
@@ -322,7 +311,7 @@ export function evaluateNelsonRules(
           ruleId: 1,
           ruleName: '规则 1: 点落在3σ区外',
           chartPart,
-          description: `该点值 (${val.toFixed(3)}) 超出控制限 [${lcl.toFixed(3)}, ${ucl.toFixed(3)}]`
+          description: `该点值 (${val.toFixed(4)}) 超出控制限 [${lcl.toFixed(4)}, ${ucl.toFixed(4)}]`
         });
       }
     }
@@ -477,7 +466,6 @@ export function calculateProcessCapability(
     };
   }
 
-  // 展开所有单个测量值
   const allValues: number[] = [];
   activeSubgroups.forEach(sg => {
     if (sg.values && sg.values.length > 0) {
@@ -490,11 +478,8 @@ export function calculateProcessCapability(
   const totalN = allValues.length;
   const grandMean = allValues.reduce((a, b) => a + b, 0) / totalN;
 
-  // 整体标准差 Overall Sigma (用于 Pp, Ppk)
   const sumSq = allValues.reduce((acc, val) => acc + Math.pow(val - grandMean, 2), 0);
   const sigmaOverall = totalN > 1 ? Math.sqrt(sumSq / (totalN - 1)) : 0;
-
-  // 组内标准差 Within Sigma (由控制限公式估算，如 Rbar/d2 或 Sbar/c4)
   const sigmaWithin = limits.sigma > 0 ? limits.sigma : sigmaOverall;
 
   let cp: number | undefined;
@@ -525,7 +510,6 @@ export function calculateProcessCapability(
       ppl = (grandMean - lsl!) / (3 * sigmaOverall);
       ppk = Math.min(ppu, ppl);
     }
-    // 制程准确度 Ca = (Xbar - SL) / (T / 2)
     const targetSL = sl !== undefined ? sl : (usl! + lsl!) / 2;
     ca = Math.abs(grandMean - targetSL) / (specWidth / 2);
   } else if (hasUSL) {
@@ -548,7 +532,6 @@ export function calculateProcessCapability(
     }
   }
 
-  // 过程能力等级判定
   let grade: 'A+' | 'A' | 'B' | 'C' | 'D' = 'B';
   let gradeDesc = '制程能力合格';
   const evalIndex = cpk ?? ppk ?? 1.0;
@@ -570,10 +553,8 @@ export function calculateProcessCapability(
     gradeDesc = '严重不足 - 制程失控，急需停机整改';
   }
 
-  // PPM 估算
   let ppm = 0;
   if (cpk !== undefined) {
-    // 粗略标准正态单侧累积近似
     const z = Math.max(0, cpk * 3);
     const p = Math.exp(-0.5 * z * z) / (z * Math.sqrt(2 * Math.PI));
     ppm = Math.round(p * 1_000_000);
@@ -599,7 +580,7 @@ export function calculateProcessCapability(
 }
 
 /**
- * 正态分布概率密度函数 (用于直方图曲线拟合)
+ * 正态分布概率密度函数
  */
 export function normalPdf(x: number, mean: number, sigma: number): number {
   if (sigma <= 0) return 0;
@@ -610,9 +591,6 @@ export function normalPdf(x: number, mean: number, sigma: number): number {
 
 /**
  * 审查审计模式数据模拟生成算法
- * 根据输入的 CPK、控制上下限、规范上下限及上传的真实数据，自动数学建模反推
- * 严格保留真实数据的元信息（生产批号、采集时间、工序、设备号、检验员等）
- * 并生成完美符合目标 CPK 与控制限要求的模拟数据与图表
  */
 export function generateAuditSimulationSubgroups(
   realSubgroups: SubgroupDataPoint[],
@@ -632,40 +610,27 @@ export function generateAuditSimulationSubgroups(
 
   const { targetCpk, usl, sl, lsl, ucl, cl, lcl } = params;
   
-  // 确定目标中心值与理论标准差
   const targetMean = sl !== undefined && !isNaN(sl) ? sl : (cl !== undefined && !isNaN(cl) ? cl : (usl + lsl) / 2);
   const specTolerance = Math.abs(usl - lsl) || 1;
-  
-  // 根据目标 CPK 反推所需要的总体标准差 sigma:
-  // Cpk = (specTolerance / 2 - |targetMean - (usl+lsl)/2|) / (3 * sigma)
-  // 当居中时: Cpk = specTolerance / (6 * sigma) => sigma = specTolerance / (6 * targetCpk)
   const offset = Math.abs(targetMean - (usl + lsl) / 2);
   const effectiveMargin = Math.max(0.0001, (specTolerance / 2) - offset);
   const targetSigma = effectiveMargin / (3 * Math.max(0.1, targetCpk));
 
-  // 计量型控制图处理 (Xbar-R, Xbar-S, I-MR)
   const isVariable = ['xbar-r', 'xbar-s', 'i-mr'].includes(chartType);
   const isIndividual = chartType === 'i-mr';
 
-  // 用于控制点在控制限内自然小幅摆动，完全规避 Nelson 8 大判异异常 (0违规完美受控)
-  // 设定小幅波动幅值在 ±1.2 sigma 范围，正负交替波动
   const simulated: SubgroupDataPoint[] = realSubgroups.map((real, idx) => {
     const n = Math.max(1, real.n || (real.values?.length || 5));
     const newValues: number[] = [];
 
-    // 计算该批次子组的中心偏移 (受控微小扰动，不产生同侧连续9点、不产生连续6点递增递减)
-    // 利用伪周期正弦 + 微小扰动使得数据看起来极为真实自然
     const wave = Math.sin((idx * 1.3)) * 0.4 + Math.cos((idx * 0.7)) * 0.25;
     const batchMean = targetMean + wave * (targetSigma * 0.35);
 
     if (isIndividual) {
-      // 单值 I-MR
       const v = Number(batchMean.toFixed(4));
       newValues.push(v);
     } else if (isVariable) {
-      // 多样本容量 (如 n=5 或 10)
       for (let j = 0; j < n; j++) {
-        // 子组内采样，围绕 batchMean
         const subAngle = (j / n) * Math.PI * 2;
         const subNoise = (Math.sin(subAngle + idx) * 0.7 + (Math.random() - 0.5) * 0.3);
         const val = batchMean + subNoise * targetSigma;
@@ -675,13 +640,11 @@ export function generateAuditSimulationSubgroups(
 
     const stats = computeSubgroupStats(newValues);
     
-    // 如果是计数型控制图 (P, NP, C, U)
     let sampleCount = real.sampleCount ?? n ?? 100;
     let defectCount = 0;
     let computedMean = stats.mean;
 
     if (chartType === 'p') {
-      // 模拟优秀不良率 (例如 0.2% ~ 0.5%)
       const targetP = mode === 'gjb' ? 0.003 : 0.008;
       defectCount = Math.max(0, Math.round(sampleCount * (targetP + (Math.random() - 0.5) * 0.002)));
       computedMean = Number((defectCount / sampleCount).toFixed(4));
@@ -699,11 +662,11 @@ export function generateAuditSimulationSubgroups(
     return {
       id: `sim-${real.id}`,
       seq: real.seq,
-      sampleTime: real.sampleTime,   // 继承真实采集时间
-      batchNo: real.batchNo,         // 继承真实生产批号
-      processName: real.processName, // 继承真实工序
-      deviceNo: real.deviceNo,       // 继承真实设备号
-      operator: real.operator,       // 继承真实检验员
+      sampleTime: real.sampleTime,
+      batchNo: real.batchNo,
+      processName: real.processName,
+      deviceNo: real.deviceNo,
+      operator: real.operator,
       values: newValues,
       sampleCount,
       defectCount,
@@ -711,12 +674,11 @@ export function generateAuditSimulationSubgroups(
       mean: Number(computedMean.toFixed(4)),
       range: Number(stats.range.toFixed(4)),
       stdDev: Number(stats.stdDev.toFixed(4)),
-      isVoided: false,               // 审查模式全部有效受控
-      violations: []                 // 审查模式 0 违规
+      isVoided: false,
+      violations: []
     };
   });
 
-  // 如果是 I-MR，重新计算连续移动极差
   if (chartType === 'i-mr') {
     for (let i = 1; i < simulated.length; i++) {
       simulated[i].movingRange = Number(Math.abs(simulated[i].mean - simulated[i - 1].mean).toFixed(4));
@@ -725,4 +687,3 @@ export function generateAuditSimulationSubgroups(
 
   return simulated;
 }
-
