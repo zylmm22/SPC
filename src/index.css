@@ -217,3 +217,20 @@ html.light [class*="bg-indigo-600/20"] svg {
   color: #0f172a !important;
   stroke: #0f172a !important;
 }
+html.light [class*="bg-sky-950"],
+html.light .bg-sky-950\/40 {
+  background-color: #eff6ff !important; /* 柔和浅天蓝纯净底色 */
+  border-color: #bfdbfe !important;     /* 精致浅蓝边框 */
+  color: #1e3a8a !important;            /* 鲜明高对比深蓝字 */
+}
+
+/* 强制横幅内所有标题、说明文字与勋章图标为高清晰深蓝 */
+html.light [class*="bg-sky-950"] *,
+html.light .bg-sky-950\/40 * {
+  color: #1e40af !important;
+}
+html.light [class*="bg-sky-950"] p,
+html.light [class*="bg-sky-950"] span,
+html.light .bg-sky-950\/40 span {
+  color: #1e3a8a !important;
+}

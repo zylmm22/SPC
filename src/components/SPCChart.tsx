@@ -3,7 +3,6 @@ import {
   SubgroupDataPoint, 
   ControlLimits, 
   ProcessCharacteristic, 
-  SPCChartType,
   AuditLevelMode,
   CNAuditConfig,
   GJBAuditConfig
@@ -13,9 +12,7 @@ import {
   AlertTriangle, 
   CheckCircle2, 
   EyeOff, 
-  Info, 
   Sliders, 
-  Maximize2, 
   RotateCcw,
   Sparkles,
   Activity,
@@ -23,7 +20,6 @@ import {
   ShieldCheck,
   Settings,
   Lock,
-  Eye,
   Calendar
 } from 'lucide-react';
 
@@ -71,7 +67,7 @@ export const SPCChart: React.FC<SPCChartProps> = ({
 
   const isDualChart = ['xbar-r', 'xbar-s', 'i-mr'].includes(process.chartType);
 
-  // 忠实抓取工序中真实的 USL / LSL，严禁擅自加负号！
+  // 忠实抓取工序中真实的 USL / LSL，严禁擅自加负号
   const normalizedSpecs = useMemo(() => {
     let u = process.usl;
     let l = process.lsl;
@@ -108,18 +104,17 @@ export const SPCChart: React.FC<SPCChartProps> = ({
     };
   }, [subgroups]);
 
-  // SVG 画布尺寸配置 (右边距拓宽为 105，保证多位数标签不被裁切)
+  // SVG 画布尺寸配置
   const svgWidth = 980;
   const mainHeight = isDualChart ? 285 : 365;
   const subHeight = isDualChart ? 190 : 0;
   const padding = { top: 25, right: 105, bottom: 38, left: 65 };
 
-  // 绘图区域有效尺寸
   const plotWidth = svgWidth - padding.left - padding.right;
   const plotMainHeight = mainHeight - padding.top - padding.bottom;
   const plotSubHeight = subHeight - padding.top - padding.bottom;
 
-  // 提取副图对应统计量 (根据图表类型严格区分：S 图取标差，R 图取极差，MR 图取移动极差)
+  // 提取副图统计量 (S 图取标差，R 图取极差，MR 图取移动极差)
   const getSubPointVal = (sg: SubgroupDataPoint): number => {
     if (process.chartType === 'xbar-s') {
       return sg.stdDev !== undefined ? sg.stdDev : (sg.range ?? 0);
@@ -130,18 +125,13 @@ export const SPCChart: React.FC<SPCChartProps> = ({
     return sg.range !== undefined ? sg.range : (sg.stdDev ?? sg.movingRange ?? 0);
   };
 
-  // X 轴标签格式化
   const formatXAxisLabel = (sg: SubgroupDataPoint, mode: 'seq' | 'batchNo' | 'sampleTime') => {
-    if (mode === 'seq') {
-      return `${sg.seq}`;
-    }
+    if (mode === 'seq') return `${sg.seq}`;
     if (mode === 'batchNo') {
       if (!sg.batchNo) return `#${sg.seq}`;
       if (sg.batchNo.startsWith('LOT-')) {
         const parts = sg.batchNo.split('-');
-        if (parts.length >= 3) {
-          return `LOT-${parts[parts.length - 1]}`;
-        }
+        if (parts.length >= 3) return `LOT-${parts[parts.length - 1]}`;
       }
       return sg.batchNo.length > 10 ? sg.batchNo.slice(-7) : sg.batchNo;
     }
@@ -158,19 +148,13 @@ export const SPCChart: React.FC<SPCChartProps> = ({
     return `${sg.seq}`;
   };
 
-  // X 轴刻度步长自适应
   const tickInterval = useMemo(() => {
     if (subgroups.length <= 10) return 1;
-    if (xAxisMode === 'sampleTime') {
-      return Math.max(1, Math.ceil(subgroups.length / 8));
-    }
-    if (xAxisMode === 'batchNo') {
-      return Math.max(1, Math.ceil(subgroups.length / 10));
-    }
+    if (xAxisMode === 'sampleTime') return Math.max(1, Math.ceil(subgroups.length / 8));
+    if (xAxisMode === 'batchNo') return Math.max(1, Math.ceil(subgroups.length / 10));
     return Math.max(1, Math.ceil(subgroups.length / 16));
   }, [subgroups.length, xAxisMode]);
 
-  // 主图 Y 轴范围计算
   const mainYRange = useMemo(() => {
     const mainValues = subgroups.map(s => s.mean);
     const ucl = limits.ucl;
@@ -189,13 +173,9 @@ export const SPCChart: React.FC<SPCChartProps> = ({
     const span = maxVal - minVal || 1;
     const margin = span * 0.15;
 
-    return {
-      min: minVal - margin,
-      max: maxVal + margin
-    };
+    return { min: minVal - margin, max: maxVal + margin };
   }, [subgroups, limits, normalizedSpecs, showSpecLimits]);
 
-  // 副图 Y 轴范围计算
   const subYRange = useMemo(() => {
     if (!isDualChart) return { min: 0, max: 1 };
     const subValues = subgroups.map(s => getSubPointVal(s));
@@ -209,32 +189,18 @@ export const SPCChart: React.FC<SPCChartProps> = ({
     const span = maxVal - minVal || 1;
     const margin = span * 0.15;
 
-    return {
-      min: minVal - margin,
-      max: maxVal + margin
-    };
+    return { min: minVal - margin, max: maxVal + margin };
   }, [subgroups, limits, isDualChart, process.chartType]);
 
-  // 控制限小数精度智能计算
-  const subDecimals = useMemo(() => {
-    if (limits.subUcl !== undefined && String(limits.subUcl).includes('.')) {
-      return String(limits.subUcl).split('.')[1].length;
-    }
-    if (limits.subCl !== undefined && String(limits.subCl).includes('.')) {
-      return String(limits.subCl).split('.')[1].length;
-    }
-    return 4;
-  }, [limits.subUcl, limits.subCl]);
-
   const mainDecimals = useMemo(() => {
-    if (limits.ucl !== undefined && String(limits.ucl).includes('.')) {
-      return String(limits.ucl).split('.')[1].length;
-    }
-    if (limits.cl !== undefined && String(limits.cl).includes('.')) {
-      return String(limits.cl).split('.')[1].length;
-    }
+    if (limits.ucl !== undefined && String(limits.ucl).includes('.')) return String(limits.ucl).split('.')[1].length;
     return 4;
-  }, [limits.ucl, limits.cl]);
+  }, [limits.ucl]);
+
+  const subDecimals = useMemo(() => {
+    if (limits.subUcl !== undefined && String(limits.subUcl).includes('.')) return String(limits.subUcl).split('.')[1].length;
+    return 4;
+  }, [limits.subUcl]);
 
   const formatLimitValue = (val: number | undefined, decimals: number) => {
     if (val === undefined || isNaN(val)) return '-';
@@ -242,7 +208,6 @@ export const SPCChart: React.FC<SPCChartProps> = ({
     return Number(val.toFixed(decimals)).toString();
   };
 
-  // 坐标转换函数
   const getX = (index: number) => {
     if (subgroups.length <= 1) return padding.left + plotWidth / 2;
     return padding.left + (index / (subgroups.length - 1)) * plotWidth;
@@ -262,7 +227,6 @@ export const SPCChart: React.FC<SPCChartProps> = ({
     return padding.top + plotSubHeight - ratio * plotSubHeight;
   };
 
-  // 标签防重叠避让算法
   const adjustLabelPositions = (labels: Array<{ id: string; rawY: number; text: string; color: string; fontSize: number; isBold?: boolean }>) => {
     if (labels.length === 0) return [];
     const sorted = [...labels].sort((a, b) => a.rawY - b.rawY);
@@ -276,68 +240,23 @@ export const SPCChart: React.FC<SPCChartProps> = ({
     return sorted;
   };
 
-  // 主图右侧控制线与规格限标签
   const mainChartLabels = useMemo(() => {
     const list: Array<{ id: string; rawY: number; text: string; color: string; fontSize: number; isBold?: boolean; val: number }> = [];
 
     if (showSpecLimits && normalizedSpecs.usl !== undefined) {
-      list.push({
-        id: 'usl',
-        val: normalizedSpecs.usl,
-        rawY: getMainY(normalizedSpecs.usl),
-        text: `USL: ${normalizedSpecs.usl}`,
-        color: '#c084fc',
-        fontSize: 10,
-        isBold: true
-      });
+      list.push({ id: 'usl', val: normalizedSpecs.usl, rawY: getMainY(normalizedSpecs.usl), text: `USL: ${normalizedSpecs.usl}`, color: '#c084fc', fontSize: 10, isBold: true });
     }
-
     if (limits.ucl !== undefined && !isNaN(limits.ucl)) {
-      list.push({
-        id: 'ucl',
-        val: limits.ucl,
-        rawY: getMainY(limits.ucl),
-        text: `UCL: ${formatLimitValue(limits.ucl, mainDecimals)}`,
-        color: '#ef4444',
-        fontSize: 11,
-        isBold: true
-      });
+      list.push({ id: 'ucl', val: limits.ucl, rawY: getMainY(limits.ucl), text: `UCL: ${formatLimitValue(limits.ucl, mainDecimals)}`, color: '#ef4444', fontSize: 11, isBold: true });
     }
-
     if (limits.cl !== undefined && !isNaN(limits.cl)) {
-      list.push({
-        id: 'cl',
-        val: limits.cl,
-        rawY: getMainY(limits.cl),
-        text: `CL: ${formatLimitValue(limits.cl, mainDecimals)}`,
-        color: '#10b981',
-        fontSize: 11,
-        isBold: true
-      });
+      list.push({ id: 'cl', val: limits.cl, rawY: getMainY(limits.cl), text: `CL: ${formatLimitValue(limits.cl, mainDecimals)}`, color: '#10b981', fontSize: 11, isBold: true });
     }
-
     if (limits.lcl !== undefined && !isNaN(limits.lcl)) {
-      list.push({
-        id: 'lcl',
-        val: limits.lcl,
-        rawY: getMainY(limits.lcl),
-        text: `LCL: ${formatLimitValue(limits.lcl, mainDecimals)}`,
-        color: '#ef4444',
-        fontSize: 11,
-        isBold: true
-      });
+      list.push({ id: 'lcl', val: limits.lcl, rawY: getMainY(limits.lcl), text: `LCL: ${formatLimitValue(limits.lcl, mainDecimals)}`, color: '#ef4444', fontSize: 11, isBold: true });
     }
-
     if (showSpecLimits && normalizedSpecs.lsl !== undefined) {
-      list.push({
-        id: 'lsl',
-        val: normalizedSpecs.lsl,
-        rawY: getMainY(normalizedSpecs.lsl),
-        text: `LSL: ${normalizedSpecs.lsl}`,
-        color: '#c084fc',
-        fontSize: 10,
-        isBold: true
-      });
+      list.push({ id: 'lsl', val: normalizedSpecs.lsl, rawY: getMainY(normalizedSpecs.lsl), text: `LSL: ${normalizedSpecs.lsl}`, color: '#c084fc', fontSize: 10, isBold: true });
     }
 
     const adjusted = adjustLabelPositions(list);
@@ -346,115 +265,31 @@ export const SPCChart: React.FC<SPCChartProps> = ({
     return { list, adjustedMap: map };
   }, [limits, normalizedSpecs, showSpecLimits, mainYRange, mainDecimals]);
 
-  // 主副图标题与单位
   const chartLabels = useMemo(() => {
     switch (process.chartType) {
       case 'xbar-r':
-        return { main: '均值 (X-bar) 控制图', sub: '极差 (R) 控制图', mainUnit: process.unit, subUnit: process.unit };
+        return { main: '均值 (X-bar) 控制图', sub: '极差 (R) 控制图' };
       case 'xbar-s':
-        return { main: '均值 (X-bar) 控制图', sub: '标准差 (S) 控制图', mainUnit: process.unit, subUnit: process.unit };
+        return { main: '均值 (X-bar) 控制图', sub: '标准差 (S) 控制图' };
       case 'i-mr':
-        return { main: '单值 (I) 控制图', sub: '移动极差 (MR) 控制图', mainUnit: process.unit, subUnit: process.unit };
+        return { main: '单值 (I) 控制图', sub: '移动极差 (MR) 控制图' };
       case 'p':
-        return { main: '不良率 (P) 控制图', sub: '', mainUnit: '%', subUnit: '' };
+        return { main: '不良率 (P) 控制图', sub: '' };
       case 'np':
-        return { main: '不合格品数 (NP) 控制图', sub: '', mainUnit: '件', subUnit: '' };
+        return { main: '不合格品数 (NP) 控制图', sub: '' };
       case 'c':
-        return { main: '缺陷总数 (C) 控制图', sub: '', mainUnit: '个', subUnit: '' };
+        return { main: '缺陷总数 (C) 控制图', sub: '' };
       case 'u':
-        return { main: '单位缺陷数 (U) 控制图', sub: '', mainUnit: '个/件', subUnit: '' };
+        return { main: '单位缺陷数 (U) 控制图', sub: '' };
+      default:
+        return { main: '主控制图', sub: '辅助控制图' };
     }
-  }, [process.chartType, process.unit]);
+  }, [process.chartType]);
 
   const sigmaMain = (limits.ucl - limits.cl) / 3;
 
   return (
     <div className="space-y-4">
-      {/* 审查审计专项工具栏 (自适应深浅色背景与边框) */}
-      <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 bg-white dark:bg-gradient-to-r dark:from-slate-900 dark:via-slate-900 dark:to-indigo-950/40 border border-slate-200 dark:border-indigo-900/50 rounded-xl shadow-sm dark:shadow-lg transition-colors">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse"></span>
-            审查模拟功能 (用于体系审查与抽检):
-          </span>
-          <div className="flex items-center gap-2">
-            {/* 1. 真实数据 */}
-            <button
-              onClick={() => onSwitchAuditMode && onSwitchAuditMode('real')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
-                auditMode === 'real'
-                  ? 'bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-600 shadow-sm'
-                  : 'bg-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
-              }`}
-            >
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-              真实原始数据
-            </button>
-
-            {/* 2. CN等级 按钮 */}
-            <button
-              onClick={() => {
-                if (!cnConfig?.isConfigured) {
-                  onOpenAuditModal && onOpenAuditModal('cn');
-                } else {
-                  onSwitchAuditMode && onSwitchAuditMode('cn');
-                }
-              }}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 shadow-sm active:scale-95 ${
-                auditMode === 'cn'
-                  ? 'bg-sky-600 text-white border border-sky-400 shadow-sky-600/30 ring-2 ring-sky-500/30'
-                  : 'bg-sky-50 dark:bg-sky-950/60 hover:bg-sky-100 dark:hover:bg-sky-900/80 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800/80'
-              }`}
-            >
-              <Award className="w-3.5 h-3.5" />
-              CN等级
-              {cnConfig?.isConfigured && (
-                <span className="text-[10px] px-1 py-0.2 rounded bg-sky-200 dark:bg-sky-900 text-sky-800 dark:text-sky-200">
-                  Cpk:{cnConfig.targetCpk}
-                </span>
-              )}
-            </button>
-
-            {/* 3. 国军标等级 按钮 */}
-            <button
-              onClick={() => {
-                if (!gjbConfig?.isConfigured) {
-                  onOpenAuditModal && onOpenAuditModal('gjb');
-                } else {
-                  onSwitchAuditMode && onSwitchAuditMode('gjb');
-                }
-              }}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 shadow-sm active:scale-95 ${
-                auditMode === 'gjb'
-                  ? 'bg-amber-600 text-white border border-amber-400 shadow-amber-600/30 ring-2 ring-amber-500/30'
-                  : 'bg-amber-50 dark:bg-amber-950/60 hover:bg-amber-100 dark:hover:bg-amber-900/80 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800/80'
-              }`}
-            >
-              <ShieldCheck className="w-3.5 h-3.5" />
-              国军标等级
-              {gjbConfig?.isConfigured && (
-                <span className="text-[10px] px-1 py-0.2 rounded bg-amber-200 dark:bg-amber-900 text-amber-800 dark:text-amber-200">
-                  GJB:{gjbConfig.targetCpk}
-                </span>
-              )}
-            </button>
-          </div>
-        </div>
-
-        {/* 审查模式参数调整按钮 */}
-        <div className="flex items-center gap-2">
-          {auditMode !== 'real' && (
-            <button
-              onClick={() => onOpenAuditModal && onOpenAuditModal(auditMode)}
-              className="px-2.5 py-1 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-indigo-700 dark:text-indigo-300 rounded-lg text-xs font-medium flex items-center gap-1 border border-slate-300 dark:border-indigo-900/80 transition-all"
-            >
-              <Settings className="w-3.5 h-3.5" />
-              修改{auditMode === 'cn' ? 'CN等级' : '国军标'}审查参数
-            </button>
-          )}
-        </div>
-      </div>
-
       {/* 审查模式生效说明横幅 */}
       {auditMode !== 'real' && (
         <div className={`p-3 rounded-xl border flex items-center justify-between text-xs transition-colors ${
@@ -475,7 +310,7 @@ export const SPCChart: React.FC<SPCChartProps> = ({
           </div>
           <button
             onClick={() => onSwitchAuditMode && onSwitchAuditMode('real')}
-            className="px-2.5 py-1 rounded bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700 text-[11px] shrink-0 ml-2"
+            className="px-2.5 py-1 rounded bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700 text-[11px] shrink-0 ml-2 shadow-sm"
           >
             退出审查切回真实数据
           </button>
@@ -483,7 +318,7 @@ export const SPCChart: React.FC<SPCChartProps> = ({
       )}
 
       {/* 顶部监控状态指示看板 */}
-      <div className="flex flex-wrap items-center justify-between gap-3 p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm dark:shadow-lg transition-colors">
+      <div className="flex flex-wrap items-center justify-between gap-3 p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm transition-colors">
         <div className="flex items-center gap-3">
           <div className={`p-2.5 rounded-lg flex items-center justify-center ${
             violationStats.isControlled ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30' : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/30'
@@ -509,7 +344,7 @@ export const SPCChart: React.FC<SPCChartProps> = ({
           </div>
         </div>
 
-        {/* 控制图辅助显示开关与 X 轴坐标显示下拉选择 */}
+        {/* 控制图辅助显示开关 */}
         <div className="flex flex-wrap items-center gap-2 text-xs">
           <div className="flex items-center gap-1.5 bg-slate-50 dark:bg-slate-950/80 border border-slate-300 dark:border-indigo-900/60 rounded-lg px-2.5 py-1 text-xs">
             <span className="text-slate-500 dark:text-slate-400 font-medium flex items-center gap-1 whitespace-nowrap">
@@ -551,8 +386,8 @@ export const SPCChart: React.FC<SPCChartProps> = ({
         </div>
       </div>
 
-      {/* Nelson 8 大判异准则实时勾选配置栏 */}
-      <div className="p-3.5 bg-white dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm dark:shadow-md transition-colors">
+      {/* Nelson 8 大判异准则 */}
+      <div className="p-3.5 bg-white dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm transition-colors">
         <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-200 dark:border-slate-800">
           <div className="flex items-center gap-2">
             <Sparkles className="w-4 h-4 text-amber-500" />
@@ -566,7 +401,7 @@ export const SPCChart: React.FC<SPCChartProps> = ({
           <div className="flex items-center gap-2 text-[11px]">
             <button
               onClick={() => onToggleAllRules(true)}
-              className="text-indigo-600 dark:text-indigo-400 hover:underline"
+              className="text-indigo-600 dark:text-indigo-400 hover:underline font-medium"
             >
               全选
             </button>
@@ -580,7 +415,6 @@ export const SPCChart: React.FC<SPCChartProps> = ({
           </div>
         </div>
 
-        {/* 规则复选标签列表 */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
           {NELSON_8_RULES.map(rule => {
             const isChecked = enabledRules.includes(rule.id);
@@ -617,8 +451,8 @@ export const SPCChart: React.FC<SPCChartProps> = ({
         </div>
       </div>
 
-      {/* SVG 控制图主体区域 (浅色纯白底 vs 深色黑底，自适应网格) */}
-      <div className="relative bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm dark:shadow-2xl p-2 transition-colors">
+      {/* SVG 控制图主体区域 */}
+      <div className="relative bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm p-2 transition-colors">
         <svg
           viewBox={`0 0 ${svgWidth} ${mainHeight + (isDualChart ? subHeight + 15 : 0)}`}
           className="w-full h-auto select-none font-sans"
@@ -785,7 +619,7 @@ export const SPCChart: React.FC<SPCChartProps> = ({
               />
             )}
 
-            {/* 变动样本量控制限阶梯线 (P图/U图完整保留) */}
+            {/* 变动样本量控制限阶梯线 */}
             {limits.hasVariableLimits && limits.variableLimits && (
               <>
                 <path
@@ -856,7 +690,7 @@ export const SPCChart: React.FC<SPCChartProps> = ({
               strokeLinejoin="round"
             />
 
-            {/* 主图数据点渲染 */}
+            {/* 主图数据点 */}
             {subgroups.map((sg, idx) => {
               const x = getX(idx);
               const y = getMainY(sg.mean);
@@ -909,7 +743,6 @@ export const SPCChart: React.FC<SPCChartProps> = ({
                     />
                   )}
 
-                  {/* X 轴刻度 */}
                   {(idx % tickInterval === 0 || idx === subgroups.length - 1) && (
                     <text
                       x={x}
@@ -926,7 +759,6 @@ export const SPCChart: React.FC<SPCChartProps> = ({
               );
             })}
 
-            {/* X 轴维度指示 */}
             <text
               x={padding.left + plotWidth}
               y={padding.top + plotMainHeight + 32}
@@ -938,7 +770,6 @@ export const SPCChart: React.FC<SPCChartProps> = ({
               [X轴: {xAxisMode === 'seq' ? '批次顺序 1,2,3...' : xAxisMode === 'batchNo' ? '生产批次号' : '采集日期时间'}]
             </text>
 
-            {/* 左侧主图标题 */}
             <text
               x={padding.left}
               y={padding.top - 8}
@@ -951,7 +782,7 @@ export const SPCChart: React.FC<SPCChartProps> = ({
             </text>
           </g>
 
-          {/* ======================= 副图绘制 (R / S / MR) ======================= */}
+          {/* ======================= 副图绘制 (S / R / MR) ======================= */}
           {isDualChart && (
             <g id="sub-chart" transform={`translate(0, ${mainHeight + 15})`}>
               <rect
@@ -1040,7 +871,6 @@ export const SPCChart: React.FC<SPCChartProps> = ({
                 </>
               )}
 
-              {/* 副图折线 */}
               <path
                 d={subgroups.map((sg, idx) => {
                   const val = getSubPointVal(sg);
@@ -1055,7 +885,6 @@ export const SPCChart: React.FC<SPCChartProps> = ({
                 strokeLinejoin="round"
               />
 
-              {/* 副图数据点与刻度 */}
               {subgroups.map((sg, idx) => {
                 const val = getSubPointVal(sg);
                 const x = getX(idx);
@@ -1133,7 +962,7 @@ export const SPCChart: React.FC<SPCChartProps> = ({
           )}
         </svg>
 
-        {/* 浮动悬停数据详情卡片 (包含测量值点阵 x1~x10 完整保留) */}
+        {/* 浮动悬停数据详情卡片 */}
         {hoveredPoint && (
           <div className="absolute top-4 right-4 bg-white/95 dark:bg-slate-900/95 backdrop-blur border border-slate-300 dark:border-slate-700/80 rounded-xl p-3 shadow-2xl text-xs text-slate-700 dark:text-slate-300 w-72 pointer-events-none z-20 transition-colors">
             <div className="flex items-center justify-between pb-1.5 mb-2 border-b border-slate-200 dark:border-slate-800">
@@ -1185,7 +1014,6 @@ export const SPCChart: React.FC<SPCChartProps> = ({
               )}
             </div>
 
-            {/* 违规报警描述 */}
             {hoveredPoint.violations && hoveredPoint.violations.length > 0 && (
               <div className="mt-2.5 pt-2 border-t border-rose-200 dark:border-rose-900/60 bg-rose-50/80 dark:bg-rose-950/30 -mx-3 -mb-3 p-2.5 rounded-b-xl">
                 <div className="flex items-center gap-1.5 text-rose-700 dark:text-rose-400 font-semibold text-[11px] mb-1">
@@ -1210,7 +1038,7 @@ export const SPCChart: React.FC<SPCChartProps> = ({
         )}
       </div>
 
-      {/* 点击选定子组弹出操作抽屉 (管理员权限判断、作废原因输入、重算与恢复完整保留) */}
+      {/* 点击选定子组弹出操作抽屉 */}
       {selectedPoint && (
         <div className="p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-indigo-900/50 rounded-xl shadow-lg flex flex-col md:flex-row md:items-center justify-between gap-4 transition-colors">
           <div className="space-y-1">
