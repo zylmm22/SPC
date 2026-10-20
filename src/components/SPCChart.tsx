@@ -112,7 +112,11 @@ export const SPCChart: React.FC<SPCChartProps> = ({
     const usl = showSpecLimits && process.usl !== undefined ? process.usl : ucl;
     const lsl = showSpecLimits && process.lsl !== undefined ? process.lsl : lcl;
 
-    const allY = [...mainValues, ucl, lcl, cl, usl, lsl].filter(v => v !== undefined && !isNaN(v));
+    const variableY = (limits.hasVariableLimits && limits.variableLimits)
+      ? limits.variableLimits.flatMap(v => [v.ucl, v.lcl, v.cl])
+      : [];
+
+    const allY = [...mainValues, ucl, lcl, cl, usl, lsl, ...variableY].filter(v => v !== undefined && !isNaN(v));
     const minVal = Math.min(...allY);
     const maxVal = Math.max(...allY);
     const span = maxVal - minVal || 1;
@@ -132,17 +136,48 @@ export const SPCChart: React.FC<SPCChartProps> = ({
     const subLcl = limits.subLcl ?? 0;
     const subCl = limits.subCl ?? 0.5;
 
-    const allY = [...subValues, subUcl, subLcl, subCl];
+    const allY = [...subValues, subUcl, subLcl, subCl].filter(v => v !== undefined && !isNaN(v));
     const minVal = Math.min(...allY);
     const maxVal = Math.max(...allY);
     const span = maxVal - minVal || 1;
     const margin = span * 0.15;
 
+    // 为保证副图 LCL (即使等于 0) 及底部数据点拥有清晰视野与安全下边距（避免紧贴或被底边框遮蔽），
+    // 采用与主图一致的对称边距算法
     return {
-      min: Math.max(0, minVal - margin * 0.5),
+      min: minVal - margin,
       max: maxVal + margin
     };
   }, [subgroups, limits, isDualChart]);
+
+  // 控制限小数精度智能计算与格式化 (解决 LCL 为 0 时显示不清晰、格式不对齐的问题)
+  const subDecimals = useMemo(() => {
+    if (limits.subUcl !== undefined && String(limits.subUcl).includes('.')) {
+      return String(limits.subUcl).split('.')[1].length;
+    }
+    if (limits.subCl !== undefined && String(limits.subCl).includes('.')) {
+      return String(limits.subCl).split('.')[1].length;
+    }
+    return 4;
+  }, [limits.subUcl, limits.subCl]);
+
+  const mainDecimals = useMemo(() => {
+    if (limits.ucl !== undefined && String(limits.ucl).includes('.')) {
+      return String(limits.ucl).split('.')[1].length;
+    }
+    if (limits.cl !== undefined && String(limits.cl).includes('.')) {
+      return String(limits.cl).split('.')[1].length;
+    }
+    return 4;
+  }, [limits.ucl, limits.cl]);
+
+  const formatLimitValue = (val: number | undefined, decimals: number) => {
+    if (val === undefined || isNaN(val)) return '-';
+    if (val === 0) {
+      return (0).toFixed(decimals);
+    }
+    return String(val);
+  };
 
   // 坐标转换函数
   const getX = (index: number) => {
@@ -578,79 +613,106 @@ export const SPCChart: React.FC<SPCChartProps> = ({
               </>
             )}
 
-            {/* 控制限基准线: UCL, CL, LCL */}
+            {/* 控制限基准线: UCL, CL, LCL (全面排查各图表类型，即使 LCL 为 0 亦清晰呈现) */}
             {/* UCL 线 */}
-            <line
-              x1={padding.left}
-              y1={getMainY(limits.ucl)}
-              x2={padding.left + plotWidth}
-              y2={getMainY(limits.ucl)}
-              stroke="#ef4444"
-              strokeWidth="1.5"
-              strokeDasharray="5,4"
-            />
-            <text
-              x={padding.left + plotWidth + 6}
-              y={getMainY(limits.ucl) + 4}
-              fill="#ef4444"
-              fontSize="11"
-              fontWeight="bold"
-            >
-              UCL: {limits.ucl}
-            </text>
+            {limits.ucl !== undefined && !isNaN(limits.ucl) && (
+              <>
+                <line
+                  x1={padding.left}
+                  y1={getMainY(limits.ucl)}
+                  x2={padding.left + plotWidth}
+                  y2={getMainY(limits.ucl)}
+                  stroke="#ef4444"
+                  strokeWidth="1.5"
+                  strokeDasharray="5,4"
+                />
+                <text
+                  x={padding.left + plotWidth + 6}
+                  y={getMainY(limits.ucl) + 4}
+                  fill="#ef4444"
+                  fontSize="11"
+                  fontWeight="bold"
+                >
+                  UCL: {formatLimitValue(limits.ucl, mainDecimals)}
+                </text>
+              </>
+            )}
 
             {/* CL 线 */}
-            <line
-              x1={padding.left}
-              y1={getMainY(limits.cl)}
-              x2={padding.left + plotWidth}
-              y2={getMainY(limits.cl)}
-              stroke="#10b981"
-              strokeWidth="1.8"
-            />
-            <text
-              x={padding.left + plotWidth + 6}
-              y={getMainY(limits.cl) + 4}
-              fill="#34d399"
-              fontSize="11"
-              fontWeight="bold"
-            >
-              CL: {limits.cl}
-            </text>
+            {limits.cl !== undefined && !isNaN(limits.cl) && (
+              <>
+                <line
+                  x1={padding.left}
+                  y1={getMainY(limits.cl)}
+                  x2={padding.left + plotWidth}
+                  y2={getMainY(limits.cl)}
+                  stroke="#10b981"
+                  strokeWidth="1.8"
+                />
+                <text
+                  x={padding.left + plotWidth + 6}
+                  y={getMainY(limits.cl) + 4}
+                  fill="#34d399"
+                  fontSize="11"
+                  fontWeight="bold"
+                >
+                  CL: {formatLimitValue(limits.cl, mainDecimals)}
+                </text>
+              </>
+            )}
 
-            {/* LCL 线 */}
-            <line
-              x1={padding.left}
-              y1={getMainY(limits.lcl)}
-              x2={padding.left + plotWidth}
-              y2={getMainY(limits.lcl)}
-              stroke="#ef4444"
-              strokeWidth="1.5"
-              strokeDasharray="5,4"
-            />
-            <text
-              x={padding.left + plotWidth + 6}
-              y={getMainY(limits.lcl) + 4}
-              fill="#ef4444"
-              fontSize="11"
-              fontWeight="bold"
-            >
-              LCL: {limits.lcl}
-            </text>
+            {/* LCL 线 (即使为 0 亦规范显示) */}
+            {limits.lcl !== undefined && !isNaN(limits.lcl) && (
+              <>
+                <line
+                  x1={padding.left}
+                  y1={getMainY(limits.lcl)}
+                  x2={padding.left + plotWidth}
+                  y2={getMainY(limits.lcl)}
+                  stroke="#ef4444"
+                  strokeWidth="1.5"
+                  strokeDasharray="5,4"
+                />
+                <text
+                  x={padding.left + plotWidth + 6}
+                  y={getMainY(limits.lcl) + 4}
+                  fill="#ef4444"
+                  fontSize="11"
+                  fontWeight="bold"
+                >
+                  LCL: {formatLimitValue(limits.lcl, mainDecimals)}
+                </text>
+              </>
+            )}
 
-            {/* 变动样本量控制限阶梯线 (针对变动 n 的 P 图或 U 图) */}
+            {/* 变动样本量控制限阶梯线 (针对变动 n 的 P 图或 U 图，同时绘制 UCL 与 LCL 阶梯线) */}
             {limits.hasVariableLimits && limits.variableLimits && (
-              <path
-                d={limits.variableLimits.map((vl, idx) => {
-                  const x = getX(idx);
-                  const y = getMainY(vl.ucl);
-                  return `${idx === 0 ? 'M' : 'L'} ${x} ${y}`;
-                }).join(' ')}
-                fill="none"
-                stroke="#f43f5e"
-                strokeWidth="1.2"
-                strokeDasharray="3,3"
-              />
+              <>
+                {/* 变动 UCL 阶梯线 */}
+                <path
+                  d={limits.variableLimits.map((vl, idx) => {
+                    const x = getX(idx);
+                    const y = getMainY(vl.ucl);
+                    return `${idx === 0 ? 'M' : 'L'} ${x} ${y}`;
+                  }).join(' ')}
+                  fill="none"
+                  stroke="#f43f5e"
+                  strokeWidth="1.2"
+                  strokeDasharray="3,3"
+                />
+                {/* 变动 LCL 阶梯线 */}
+                <path
+                  d={limits.variableLimits.map((vl, idx) => {
+                    const x = getX(idx);
+                    const y = getMainY(vl.lcl);
+                    return `${idx === 0 ? 'M' : 'L'} ${x} ${y}`;
+                  }).join(' ')}
+                  fill="none"
+                  stroke="#f43f5e"
+                  strokeWidth="1.2"
+                  strokeDasharray="3,3"
+                />
+              </>
             )}
 
             {/* 主图折线 (跳过作废点用虚线或分段连接) */}
@@ -774,8 +836,8 @@ export const SPCChart: React.FC<SPCChartProps> = ({
                 strokeWidth="1"
               />
 
-              {/* 副图 UCL, CL, LCL */}
-              {limits.subUcl !== undefined && (
+              {/* 副图控制限基准线: UCL, CL, LCL (全面排查各图表类型，即使 LCL 为 0 亦规范清晰显示，参照上方均值图标准) */}
+              {limits.subUcl !== undefined && !isNaN(limits.subUcl) && (
                 <>
                   <line
                     x1={padding.left}
@@ -783,22 +845,22 @@ export const SPCChart: React.FC<SPCChartProps> = ({
                     x2={padding.left + plotWidth}
                     y2={getSubY(limits.subUcl)}
                     stroke="#ef4444"
-                    strokeWidth="1.2"
-                    strokeDasharray="4,3"
+                    strokeWidth="1.5"
+                    strokeDasharray="5,4"
                   />
                   <text
                     x={padding.left + plotWidth + 6}
                     y={getSubY(limits.subUcl) + 4}
                     fill="#ef4444"
-                    fontSize="10"
+                    fontSize="11"
                     fontWeight="bold"
                   >
-                    UCL: {limits.subUcl}
+                    UCL: {formatLimitValue(limits.subUcl, subDecimals)}
                   </text>
                 </>
               )}
 
-              {limits.subCl !== undefined && (
+              {limits.subCl !== undefined && !isNaN(limits.subCl) && (
                 <>
                   <line
                     x1={padding.left}
@@ -806,21 +868,22 @@ export const SPCChart: React.FC<SPCChartProps> = ({
                     x2={padding.left + plotWidth}
                     y2={getSubY(limits.subCl)}
                     stroke="#10b981"
-                    strokeWidth="1.5"
+                    strokeWidth="1.8"
                   />
                   <text
                     x={padding.left + plotWidth + 6}
                     y={getSubY(limits.subCl) + 4}
                     fill="#34d399"
-                    fontSize="10"
+                    fontSize="11"
                     fontWeight="bold"
                   >
-                    CL: {limits.subCl}
+                    CL: {formatLimitValue(limits.subCl, subDecimals)}
                   </text>
                 </>
               )}
 
-              {limits.subLcl !== undefined && limits.subLcl > 0 && (
+              {/* LCL 线 (即使为 0 亦规范显示，彻底解决标准差图/极差图只有 UCL 没有 LCL 的问题) */}
+              {limits.subLcl !== undefined && !isNaN(limits.subLcl) && (
                 <>
                   <line
                     x1={padding.left}
@@ -828,17 +891,17 @@ export const SPCChart: React.FC<SPCChartProps> = ({
                     x2={padding.left + plotWidth}
                     y2={getSubY(limits.subLcl)}
                     stroke="#ef4444"
-                    strokeWidth="1.2"
-                    strokeDasharray="4,3"
+                    strokeWidth="1.5"
+                    strokeDasharray="5,4"
                   />
                   <text
                     x={padding.left + plotWidth + 6}
                     y={getSubY(limits.subLcl) + 4}
                     fill="#ef4444"
-                    fontSize="10"
+                    fontSize="11"
                     fontWeight="bold"
                   >
-                    LCL: {limits.subLcl}
+                    LCL: {formatLimitValue(limits.subLcl, subDecimals)}
                   </text>
                 </>
               )}
@@ -853,12 +916,12 @@ export const SPCChart: React.FC<SPCChartProps> = ({
                 }).join(' ')}
                 fill="none"
                 stroke="#a78bfa"
-                strokeWidth="1.8"
+                strokeWidth="2"
                 strokeLinecap="round"
                 strokeLinejoin="round"
               />
 
-              {/* 副图数据点 */}
+              {/* 副图数据点与 X 轴刻度 */}
               {subgroups.map((sg, idx) => {
                 const val = sg.range ?? sg.stdDev ?? sg.movingRange ?? 0;
                 const x = getX(idx);
@@ -878,11 +941,24 @@ export const SPCChart: React.FC<SPCChartProps> = ({
                       <circle
                         cx={x}
                         cy={y}
-                        r={isSelected ? 5 : 3.8}
+                        r={isSelected ? 5.5 : 4}
                         fill={isSelected ? '#c4b5fd' : '#8b5cf6'}
                         stroke="#0f172a"
-                        strokeWidth="1"
+                        strokeWidth="1.5"
                       />
+                    )}
+
+                    {/* 副图 X 轴批次号/序号刻度 (参照上方均值图，对齐显示) */}
+                    {(idx % Math.ceil(subgroups.length / 12) === 0 || idx === subgroups.length - 1) && (
+                      <text
+                        x={x}
+                        y={padding.top + plotSubHeight + 18}
+                        fill="#94a3b8"
+                        fontSize="9"
+                        textAnchor="middle"
+                      >
+                        {sg.batchNo ? sg.batchNo.slice(-4) : `#${sg.seq}`}
+                      </text>
                     )}
                   </g>
                 );
